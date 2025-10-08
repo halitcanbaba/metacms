@@ -1,0 +1,4 @@
+/* Tailwind CSS - For production, use: npx tailwindcss -i ./input.css -o ./output.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
