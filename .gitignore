@@ -70,6 +70,9 @@ app/ui/static/css/output.css
 # MT5 SDK (if copied locally)
 MetaTrader5SDK/
 
+# MT5 Server Data
+bases/
+
 # Certificates and keys
 *.pfx
 *.pem

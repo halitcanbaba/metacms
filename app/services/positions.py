@@ -76,27 +76,30 @@ class PositionsService:
             List of open positions
         """
         try:
-            # In a real implementation, this would call MT5 API to get positions
-            # For now, returning placeholder structure
-
             logger.info("get_open_positions", login=login, symbol=symbol)
-
-            positions = [
-                # Example position structure:
-                # {
-                #     "ticket": 12345,
-                #     "login": 1234567,
-                #     "symbol": "EURUSD",
-                #     "volume": 1.0,
-                #     "type": "buy",
-                #     "price_open": 1.1000,
-                #     "price_current": 1.1050,
-                #     "profit": 50.0,
-                #     "swap": -1.5,
-                #     "commission": -10.0,
-                # }
-            ]
-
+            
+            # Get positions from MT5
+            mt5_positions = await self.mt5_service.get_positions_by_login(login, symbol)
+            
+            # Convert to dict format
+            positions = []
+            for pos in mt5_positions:
+                positions.append({
+                    "ticket": pos.get("ticket", 0),
+                    "login": pos.get("login", 0),
+                    "symbol": pos.get("symbol", ""),
+                    "volume": pos.get("volume", 0.0),
+                    "action": pos.get("action", 0),  # 0=buy, 1=sell
+                    "type": "buy" if pos.get("action", 0) == 0 else "sell",
+                    "price_open": pos.get("price_open", 0.0),
+                    "price_current": pos.get("price_current", 0.0),
+                    "profit": pos.get("profit", 0.0),
+                    "swap": pos.get("swap", 0.0),
+                    "commission": pos.get("commission", 0.0),
+                    "time_create": pos.get("time_create", 0),
+                })
+            
+            logger.info("positions_retrieved", count=len(positions), login=login, symbol=symbol)
             return positions
 
         except Exception as e:

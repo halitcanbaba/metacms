@@ -82,8 +82,9 @@ class CustomerBase(BaseDTO):
     name: str
     email: EmailStr | None = None
     phone: str | None = None
+    address: str | None = None
     tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
+    meta_data: dict[str, Any] | None = None
 
 
 class CustomerCreate(CustomerBase):
@@ -98,8 +99,9 @@ class CustomerUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    address: str | None = None
     tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
+    meta_data: dict[str, Any] | None = None
 
 
 class CustomerResponse(CustomerBase):
@@ -107,6 +109,7 @@ class CustomerResponse(CustomerBase):
 
     id: int
     external_ids: dict[str, Any] | None = None
+    mt5_accounts: list["MT5AccountResponse"] = []
     created_at: datetime
     updated_at: datetime
 
@@ -354,3 +357,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
         """Create a paginated response."""
         skip = (page - 1) * size
         return cls(items=items, total=total, skip=skip, limit=size)
+
+
+# Rebuild models to resolve forward references
+CustomerResponse.model_rebuild()

@@ -15,7 +15,7 @@ from app.domain.dto import (
     CustomerResponse,
     PaginatedResponse,
 )
-from app.domain.enums import UserRole
+from app.domain.enums import AuditAction, UserRole
 from app.domain.models import Customer
 from app.repositories.customers_repo import CustomersRepository
 from app.services.audit import AuditService
@@ -75,7 +75,7 @@ async def list_customers(
 async def create_customer(
     customer_data: CustomerCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_id: int = Depends(require_role(UserRole.DEALER)),
+    current_user = Depends(require_role(UserRole.DEALER)),
     pipedrive: PipedriveClient = Depends(get_pipedrive_client),
     audit: AuditService = Depends(get_audit_service),
 ) -> CustomerResponse:
@@ -97,7 +97,14 @@ async def create_customer(
         )
     
     # Create customer in database
-    customer = await repo.create(customer_data)
+    customer = await repo.create(
+        name=customer_data.name,
+        email=customer_data.email,
+        phone=customer_data.phone,
+        address=customer_data.address,
+        tags=customer_data.tags,
+        metadata=customer_data.meta_data,
+    )
     
     # Sync to Pipedrive (non-blocking - errors are logged but don't fail request)
     try:
@@ -117,15 +124,14 @@ async def create_customer(
         )
         
         # Update customer with external IDs
+        if org_id:
+            await repo.update_external_id(customer.id, "pipedrive_org_id", str(org_id))
+        if person_id:
+            await repo.update_external_id(customer.id, "pipedrive_person_id", str(person_id))
+        
+        # Refresh customer to get updated external_ids
         if org_id or person_id:
-            external_ids = {}
-            if org_id:
-                external_ids["pipedrive_org_id"] = org_id
-            if person_id:
-                external_ids["pipedrive_person_id"] = person_id
-            
-            await repo.update_external_id(customer.id, external_ids)
-            customer.external_ids = external_ids
+            customer = await repo.get_by_id(customer.id)
         
         logger.info(
             "customer_synced_to_pipedrive",
@@ -144,9 +150,9 @@ async def create_customer(
     
     # Audit log
     await audit.log_customer_create(
-        actor_id=current_user_id,
+        actor_id=current_user.id,
         customer_id=customer.id,
-        details={"name": customer.name, "email": customer.email},
+        customer_data={"name": customer.name, "email": customer.email, "phone": customer.phone, "address": customer.address},
     )
     
     return CustomerResponse.model_validate(customer)
@@ -181,6 +187,132 @@ async def get_customer(
     return CustomerResponse.model_validate(customer)
 
 
+@router.get(
+    "/{customer_id}/positions",
+    summary="Get customer positions",
+    description="Get all MT5 positions for a customer across all their accounts",
+)
+async def get_customer_positions(
+    customer_id: int,
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """
+    Get all positions for a customer across all their MT5 accounts.
+    
+    - Returns net positions aggregated by symbol
+    - Includes account-level breakdown
+    - Requires authentication
+    """
+    from app.repositories.accounts_repo import AccountsRepository
+    from app.services.positions import PositionsService
+    
+    # Verify customer exists
+    customers_repo = CustomersRepository(db)
+    customer = await customers_repo.get_by_id(customer_id)
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Customer with ID {customer_id} not found",
+        )
+    
+    # Get all MT5 accounts for this customer
+    accounts_repo = AccountsRepository(db)
+    accounts = await accounts_repo.get_by_customer(customer_id)
+    
+    if not accounts:
+        return {
+            "customer_id": customer_id,
+            "customer_name": customer.name,
+            "accounts": [],
+            "net_positions": [],
+            "total_volume": 0.0,
+            "total_profit": 0.0,
+        }
+    
+    # Get positions service
+    positions_service = PositionsService()
+    
+    # Collect positions from all accounts
+    all_positions = []
+    account_summaries = []
+    
+    for account in accounts:
+        try:
+            # Get positions for this account
+            positions = await positions_service.get_open_positions(
+                login=account.login,
+                symbol=symbol
+            )
+            
+            # Calculate account summary
+            account_volume = sum(p.get("volume", 0) for p in positions)
+            account_profit = sum(p.get("profit", 0) for p in positions)
+            
+            account_summaries.append({
+                "login": account.login,
+                "group": account.group,
+                "currency": account.currency,
+                "positions_count": len(positions),
+                "total_volume": account_volume,
+                "total_profit": account_profit,
+                "positions": positions,
+            })
+            
+            all_positions.extend(positions)
+        except Exception as e:
+            logger.error(
+                "failed_to_get_positions_for_account",
+                customer_id=customer_id,
+                login=account.login,
+                error=str(e),
+            )
+    
+    # Calculate net positions by symbol
+    symbol_net = {}
+    for pos in all_positions:
+        symbol_name = pos.get("symbol", "UNKNOWN")
+        volume = pos.get("volume", 0)
+        profit = pos.get("profit", 0)
+        action = pos.get("action", 0)  # 0=buy, 1=sell
+        
+        if symbol_name not in symbol_net:
+            symbol_net[symbol_name] = {
+                "symbol": symbol_name,
+                "buy_volume": 0.0,
+                "sell_volume": 0.0,
+                "net_volume": 0.0,
+                "total_profit": 0.0,
+                "positions_count": 0,
+            }
+        
+        if action == 0:  # Buy
+            symbol_net[symbol_name]["buy_volume"] += volume
+        else:  # Sell
+            symbol_net[symbol_name]["sell_volume"] += volume
+        
+        symbol_net[symbol_name]["net_volume"] = (
+            symbol_net[symbol_name]["buy_volume"] - symbol_net[symbol_name]["sell_volume"]
+        )
+        symbol_net[symbol_name]["total_profit"] += profit
+        symbol_net[symbol_name]["positions_count"] += 1
+    
+    net_positions = list(symbol_net.values())
+    total_volume = sum(abs(p["net_volume"]) for p in net_positions)
+    total_profit = sum(p["total_profit"] for p in net_positions)
+    
+    return {
+        "customer_id": customer_id,
+        "customer_name": customer.name,
+        "accounts": account_summaries,
+        "net_positions": net_positions,
+        "total_volume": total_volume,
+        "total_profit": total_profit,
+        "positions_count": len(all_positions),
+    }
+
+
 @router.put(
     "/{customer_id}",
     response_model=CustomerResponse,
@@ -191,7 +323,7 @@ async def update_customer(
     customer_id: int,
     customer_data: CustomerUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_id: int = Depends(require_role(UserRole.DEALER)),
+    current_user = Depends(require_role(UserRole.DEALER)),
     pipedrive: PipedriveClient = Depends(get_pipedrive_client),
     audit: AuditService = Depends(get_audit_service),
 ) -> CustomerResponse:
@@ -222,14 +354,18 @@ async def update_customer(
             )
     
     # Track changes for audit
-    changes = {}
+    before_data = {}
+    after_data = {}
     for field, new_value in customer_data.model_dump(exclude_unset=True).items():
         old_value = getattr(customer, field)
         if old_value != new_value:
-            changes[field] = {"old": old_value, "new": new_value}
+            before_data[field] = old_value
+            after_data[field] = new_value
+            # Update the customer object
+            setattr(customer, field, new_value)
     
     # Update in database
-    updated_customer = await repo.update(customer_id, customer_data)
+    updated_customer = await repo.update(customer)
     
     # Sync to Pipedrive
     try:
@@ -258,15 +394,13 @@ async def update_customer(
         
         # Update external IDs if needed
         if org_id or person_id:
-            new_external_ids = {}
             if org_id:
-                new_external_ids["pipedrive_org_id"] = org_id
+                await repo.update_external_id(customer_id, "pipedrive_org_id", str(org_id))
             if person_id:
-                new_external_ids["pipedrive_person_id"] = person_id
+                await repo.update_external_id(customer_id, "pipedrive_person_id", str(person_id))
             
-            if new_external_ids != external_ids:
-                await repo.update_external_id(customer_id, new_external_ids)
-                updated_customer.external_ids = new_external_ids
+            # Refresh the updated customer to get the latest external_ids
+            updated_customer = await repo.get_by_id(customer_id)
         
         logger.info(
             "customer_updated_in_pipedrive",
@@ -283,11 +417,13 @@ async def update_customer(
         )
     
     # Audit log
-    await audit.log_customer_update(
-        actor_id=current_user_id,
-        customer_id=customer_id,
-        changes=changes,
-    )
+    if before_data:  # Only log if there were actual changes
+        await audit.log_customer_update(
+            actor_id=current_user.id,
+            customer_id=customer_id,
+            before_data=before_data,
+            after_data=after_data,
+        )
     
     return CustomerResponse.model_validate(updated_customer)
 
@@ -301,7 +437,7 @@ async def update_customer(
 async def delete_customer(
     customer_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user_id: int = Depends(require_role(UserRole.ADMIN)),
+    current_user = Depends(require_role(UserRole.ADMIN)),
     audit: AuditService = Depends(get_audit_service),
 ) -> None:
     """
@@ -325,16 +461,16 @@ async def delete_customer(
     # Check if customer has active MT5 accounts
     # TODO: Add check when accounts_repo is available
     
-    # Soft delete
-    await repo.delete(customer_id)
+    # Delete customer
+    await repo.delete(customer)
     
     # Audit log
     await audit.log(
-        action="customer_deleted",
-        entity_type="customer",
+        action=AuditAction.DELETE,
+        entity="customer",
         entity_id=customer_id,
-        actor_id=current_user_id,
-        details={"name": customer.name, "email": customer.email},
+        actor_id=current_user.id,
+        before={"name": customer.name, "email": customer.email},
     )
     
-    logger.info("customer_deleted", customer_id=customer_id, actor_id=current_user_id)
+    logger.info("customer_deleted", customer_id=customer_id, actor_id=current_user.id)

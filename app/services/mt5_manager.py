@@ -149,7 +149,7 @@ class MT5ManagerService:
                 self.circuit_breaker.call_failed()
         raise MT5Exception(f"Operation failed after {settings.mt5_max_retries} retries: {last_exception}")
 
-    async def create_account(self, group: str, leverage: int, currency: str, password: str, name: str = "", first_name: str = "", last_name: str = "") -> Mt5AccountInfo:
+    async def create_account(self, group: str, leverage: int, currency: str, password: str, name: str = "") -> Mt5AccountInfo:
         def _create():
             # Find the highest existing login number by getting all users in the group
             max_login = 0
@@ -170,8 +170,12 @@ class MT5ManagerService:
                 user.Login = max_login + 1  # Set next login number
             user.Group = group
             user.Leverage = leverage
-            user.FirstName = first_name or name.split()[0] if name else "User"
-            user.LastName = last_name or (name.split()[1] if len(name.split()) > 1 else "Account")
+            
+            # Use full name only for FirstName, LastName stays empty
+            # MT5 will display just the full name from FirstName
+            full_name = name.strip() if name else "User Account"
+            user.FirstName = full_name
+            user.LastName = ""
             
             # Set user rights: Enable the account and allow trading
             # USER_RIGHT_ENABLED (1) + USER_RIGHT_PASSWORD (2) + USER_RIGHT_CONFIRMED (16) 
@@ -228,11 +232,22 @@ class MT5ManagerService:
         def _apply():
             if op_type in ("deposit", "withdrawal"):
                 deal_action = MT5Manager.MTDeal.EnDealAction.DEAL_BALANCE
+                # For withdrawal, amount should be negative
+                if op_type == "withdrawal":
+                    amount_to_apply = -abs(amount)
+                else:  # deposit
+                    amount_to_apply = abs(amount)
             elif op_type in ("credit_in", "credit_out"):
                 deal_action = MT5Manager.MTDeal.EnDealAction.DEAL_CREDIT
+                # For credit_out, amount should be negative
+                if op_type == "credit_out":
+                    amount_to_apply = -abs(amount)
+                else:  # credit_in
+                    amount_to_apply = abs(amount)
             else:
                 raise MT5InvalidDataError(f"Invalid operation type: {op_type}")
-            deal_id = self.manager.DealerBalance(login, amount, deal_action, comment)
+            
+            deal_id = self.manager.DealerBalance(login, amount_to_apply, deal_action, comment)
             if deal_id is False:
                 error = MT5Manager.LastError()
                 raise MT5Exception(f"Balance operation failed: {error[2]}", error[1].value)
@@ -316,6 +331,59 @@ class MT5ManagerService:
             logger.info("positions_aggregated", total_symbols=len(result), total_positions=sum(p.positions_count for p in result))
             
             return result
+        return await self._execute_with_retry(_get_positions)
+
+    async def get_positions_by_login(self, login: int | None = None, symbol_filter: str | None = None) -> list[dict]:
+        """Get all open positions for a specific login or all positions."""
+        def _get_positions():
+            # Get all positions
+            positions = self.manager.PositionGetByGroup("*")
+            
+            if positions is False or positions is None or len(positions) == 0:
+                return []
+            
+            result = []
+            for pos in positions:
+                try:
+                    # Filter by login if specified
+                    if login is not None and pos.Login != login:
+                        continue
+                    
+                    # Filter by symbol if specified
+                    if symbol_filter is not None and pos.Symbol != symbol_filter:
+                        continue
+                    
+                    # Convert volume from MT5 format (10000ths) to lots
+                    volume_lots = pos.Volume / 10000.0
+                    
+                    # Get position details
+                    position_data = {
+                        "ticket": pos.Position,
+                        "login": pos.Login,
+                        "symbol": pos.Symbol,
+                        "volume": volume_lots,
+                        "action": pos.Action,  # 0=buy, 1=sell
+                        "price_open": pos.PriceOpen,
+                        "price_current": pos.PriceCurrent,
+                        "profit": pos.Profit,
+                        "swap": pos.Storage,
+                        "commission": pos.Commission if hasattr(pos, 'Commission') else 0.0,
+                        "time_create": pos.TimeCreate,
+                    }
+                    
+                    result.append(position_data)
+                    
+                except Exception as e:
+                    logger.error("position_parse_error", error=str(e), login=login)
+                    continue
+            
+            logger.info("positions_retrieved_by_login", 
+                       login=login, 
+                       symbol=symbol_filter,
+                       count=len(result))
+            
+            return result
+        
         return await self._execute_with_retry(_get_positions)
 
     async def get_account_info(self, login: int) -> Mt5AccountInfo:

@@ -74,13 +74,20 @@ class CustomersRepository:
         name: str,
         email: str | None = None,
         phone: str | None = None,
+        address: str | None = None,
         tags: list[str] | None = None,
         external_ids: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Customer:
         """Create a new customer."""
         customer = Customer(
-            name=name, email=email, phone=phone, tags=tags, external_ids=external_ids or {}, metadata=metadata or {}
+            name=name, 
+            email=email, 
+            phone=phone, 
+            address=address,
+            tags=tags, 
+            external_ids=external_ids or {}, 
+            metadata=metadata or {}
         )
 
         self.db.add(customer)

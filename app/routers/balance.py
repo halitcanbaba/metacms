@@ -62,7 +62,15 @@ async def create_operation(
     mt5: MT5ManagerService = Depends(get_mt5_manager),
     audit: AuditService = Depends(get_audit_service),
 ) -> BalanceOperationResponse:
-    """Create a new balance operation."""
+    """
+    Create a new balance operation (deposit, withdrawal, credit_in, credit_out).
+    
+    Supports all operation types:
+    - deposit: Add funds to account balance
+    - withdrawal: Remove funds from account balance
+    - credit_in: Add credit (leverage) to account
+    - credit_out: Remove credit from account
+    """
     repo = BalanceRepository(db)
     
     # Check idempotency
@@ -116,5 +124,88 @@ async def create_operation(
         },
     )
     
-    logger.info("balance_operation_created", operation_id=operation.id, login=operation_data.login)
+    logger.info("balance_operation_created", operation_id=operation.id, login=operation_data.login, type=operation_data.type)
+    return BalanceOperationResponse.model_validate(operation)
+
+
+@router.post("/credit", response_model=BalanceOperationResponse, status_code=status.HTTP_201_CREATED)
+async def credit_operation(
+    login: int,
+    amount: float = Query(..., description="Credit amount (positive for credit_in, negative for credit_out)"),
+    comment: Optional[str] = Query(None, description="Operation comment"),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_role(UserRole.DEALER)),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+    audit: AuditService = Depends(get_audit_service),
+) -> BalanceOperationResponse:
+    """
+    Add or remove credit (leverage) from an MT5 account.
+    
+    - Positive amount: credit_in (add credit)
+    - Negative amount: credit_out (remove credit)
+    - Requires DEALER role or higher
+    - Supports idempotency
+    """
+    # Determine operation type based on amount sign
+    if amount > 0:
+        op_type = BalanceOperationType.CREDIT_IN
+    elif amount < 0:
+        op_type = BalanceOperationType.CREDIT_OUT
+        amount = abs(amount)  # Make it positive for storage
+    else:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero")
+    
+    repo = BalanceRepository(db)
+    
+    # Check idempotency
+    if idempotency_key:
+        existing = await repo.get_by_idempotency_key(idempotency_key)
+        if existing:
+            return BalanceOperationResponse.model_validate(existing)
+    
+    # Verify account exists
+    accounts_repo = AccountsRepository(db)
+    account = await accounts_repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    # Apply operation to MT5
+    result = await mt5.apply_balance_operation(
+        login=login,
+        op_type=op_type.value,
+        amount=amount,
+        comment=comment or f"Credit operation by user {current_user.id}",
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Credit operation failed")
+    
+    # Save to database
+    operation = await repo.create(
+        account_id=account.id,
+        login=login,
+        operation_type=op_type,
+        amount=amount,
+        comment=comment,
+        requested_by=current_user.id,
+        idempotency_key=idempotency_key,
+    )
+    
+    operation.status = BalanceOperationStatus.COMPLETED
+    await db.commit()
+    await db.refresh(operation)
+    
+    # Log audit
+    await audit.log_balance_operation(
+        actor_id=current_user.id,
+        operation_id=operation.id,
+        operation_data={
+            "login": login,
+            "type": op_type.value,
+            "amount": amount,
+        },
+    )
+    
+    logger.info("credit_operation_completed", operation_id=operation.id, login=login, type=op_type.value, amount=amount)
     return BalanceOperationResponse.model_validate(operation)
