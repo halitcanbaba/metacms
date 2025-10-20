@@ -71,16 +71,17 @@ async def list_audit_logs(
 
 @router.get(
     "/search",
-    response_model=list[AuditLogResponse],
+    response_model=PaginatedResponse[AuditLogResponse],
     summary="Search audit logs",
     description="Search audit logs by query string",
 )
 async def search_audit_logs(
     query: str = Query(..., min_length=1, description="Search query"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=500, description="Number of records to return"),
     db: AsyncSession = Depends(get_db),
     current_user_id: int = Depends(require_role(UserRole.SUPPORT)),
-) -> list[AuditLogResponse]:
+) -> PaginatedResponse[AuditLogResponse]:
     """
     Search audit logs.
     
@@ -90,9 +91,14 @@ async def search_audit_logs(
     """
     repo = AuditRepository(db)
     
-    results = await repo.search(query, limit=limit)
+    items, total = await repo.search(query, skip=skip, limit=limit)
     
-    return [AuditLogResponse.model_validate(item) for item in results]
+    return PaginatedResponse(
+        items=[AuditLogResponse.model_validate(item) for item in items],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get(

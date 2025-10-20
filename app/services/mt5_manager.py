@@ -2,6 +2,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
+from datetime import datetime, date, timedelta
 from typing import Any
 import structlog
 import MT5Manager
@@ -40,6 +41,52 @@ class Mt5BalanceResult:
     error: str | None = None
 
 @dataclass
+class Mt5DailyReport:
+    """Daily report containing account state for a specific date."""
+    login: int
+    date: str  # YYYY-MM-DD format
+    balance: float
+    credit: float
+    equity_prev_day: float  # Previous day equity
+    equity_prev_month: float  # Previous month equity
+    balance_prev_day: float  # Previous day balance
+    balance_prev_month: float  # Previous month balance
+    margin: float
+    margin_free: float
+    floating_profit: float
+    group: str
+    currency: str
+    timestamp: int  # Unix timestamp of the report
+
+@dataclass
+class Mt5RealtimeEquity:
+    """Realtime equity information for an account."""
+    login: int
+    name: str
+    balance: float
+    credit: float
+    equity: float
+    net_equity: float  # Equity - Credit (pure account value without credit)
+    margin: float
+    margin_free: float
+    margin_level: float
+    floating_profit: float
+    group: str
+    currency: str
+    timestamp: int  # Unix timestamp when fetched
+
+@dataclass
+class Mt5DealHistory:
+    """Deal history record for deposits, withdrawals, and credits."""
+    deal_id: int
+    login: int
+    action: str  # 'DEPOSIT', 'WITHDRAWAL', 'CREDIT', 'CREDIT_OUT', 'BONUS'
+    amount: float
+    balance_after: float
+    comment: str
+    timestamp: int  # Unix timestamp
+    datetime_str: str  # Human-readable datetime
+
 @dataclass
 class NetPositionSummary:
     symbol: str
@@ -151,23 +198,40 @@ class MT5ManagerService:
 
     async def create_account(self, group: str, leverage: int, currency: str, password: str, name: str = "") -> Mt5AccountInfo:
         def _create():
-            # Find the highest existing login number by getting all users in the group
+            # Find the highest existing login number across ALL users (not just the group)
+            # This prevents login conflicts when creating accounts in different groups
             max_login = 0
             try:
-                # Get all users from the group to find the highest login
-                users = self.manager.UserGetByGroup(group)
-                if users and len(users) > 0:
-                    max_login = max(u.Login for u in users)
-                    logger.info("found_max_login", group=group, max_login=max_login, total_users=len(users))
+                # Get ALL users from MT5 using wildcard
+                all_users = self.manager.UserGetByGroup("*")
+                if all_users and len(all_users) > 0:
+                    # Find the absolute max login across ALL users
+                    max_login = max(u.Login for u in all_users)
+                    
+                    # Also log group-specific info for debugging
+                    group_users = [u for u in all_users if hasattr(u, 'Group') and u.Group == group]
+                    logger.info("found_max_login", 
+                              group=group, 
+                              max_login=max_login, 
+                              next_login=max_login + 1,
+                              group_users=len(group_users), 
+                              total_users=len(all_users))
                 else:
-                    logger.info("no_existing_users", group=group)
+                    logger.info("no_users_in_system")
             except Exception as e:
                 logger.warning("could_not_get_max_login", error=str(e), group=group)
             
             # Create new user with next available login
             user = MT5Manager.MTUser(self.manager)
+            
+            # Always set the login - use next available number
+            # If max_login is 0 (no users), MT5 will auto-assign
             if max_login > 0:
-                user.Login = max_login + 1  # Set next login number
+                user.Login = max_login + 1
+                logger.info("setting_login", login=user.Login, group=group)
+            else:
+                logger.info("no_login_set_mt5_will_auto_assign", group=group)
+                
             user.Group = group
             user.Leverage = leverage
             
@@ -190,7 +254,11 @@ class MT5ManagerService:
             
             if not self.manager.UserAdd(user, password, password):
                 error = MT5Manager.LastError()
-                raise MT5Exception(f"Account creation failed: {error[2]}", error[1].value)
+                attempted_login = user.Login if max_login > 0 else "auto"
+                raise MT5Exception(
+                    f"Account creation failed: {error[2]} (attempted login: {attempted_login}, max_login: {max_login})", 
+                    error[1].value
+                )
             
             logger.info("account_created_with_login", login=user.Login, group=group, leverage=leverage, rights=user.Rights)
             
@@ -227,6 +295,52 @@ class MT5ManagerService:
                 error = MT5Manager.LastError()
                 raise MT5Exception(f"Group move failed: {error[2]}", error[1].value)
         await self._execute_with_retry(_move)
+
+    async def get_groups(self) -> list[dict[str, Any]]:
+        """Get all available groups from MT5 server by extracting from all users."""
+        def _get_groups():
+            try:
+                logger.info("fetching_all_users_to_extract_groups")
+                
+                # Get all users from MT5 using wildcard
+                users = self.manager.UserGetByGroup("*")
+                
+                if users is False or users is None:
+                    error = MT5Manager.LastError()
+                    logger.error("user_get_by_group_failed", error=error)
+                    raise MT5Exception(f"Failed to get users: {error[2] if error else 'Unknown error'}")
+                
+                if not users or len(users) == 0:
+                    logger.warning("no_users_found")
+                    return []
+                
+                logger.info("users_fetched", total_users=len(users))
+                
+                # Extract unique groups from users
+                unique_groups = set()
+                for user in users:
+                    if hasattr(user, 'Group') and user.Group:
+                        unique_groups.add(user.Group)
+                
+                logger.info("unique_groups_extracted", count=len(unique_groups), groups=list(unique_groups))
+                
+                # Convert to response format
+                result = []
+                for group_name in sorted(unique_groups):
+                    result.append({
+                        "name": group_name,
+                        "server": None,
+                        "currency": None,
+                        "company": None,
+                    })
+                
+                return result
+                
+            except Exception as e:
+                logger.error("get_groups_exception", error=str(e), error_type=type(e).__name__)
+                raise MT5Exception(f"Failed to get groups: {str(e)}")
+        
+        return await self._execute_with_retry(_get_groups)
 
     async def apply_balance_operation(self, login: int, op_type: str, amount: float, comment: str = "") -> Mt5BalanceResult:
         def _apply():
@@ -418,6 +532,384 @@ class MT5ManagerService:
                 status="active"
             )
         return await self._execute_with_retry(_get_info)
+
+    async def get_daily_reports(
+        self, 
+        login: int | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        group: str | None = None,
+    ) -> list[Mt5DailyReport]:
+        """
+        Get daily reports for accounts.
+        
+        Args:
+            login: Specific account login (optional)
+            from_date: Start date for report range
+            to_date: End date for report range
+            group: Group pattern for filtering (optional, e.g. "demo\\*")
+        
+        Returns:
+            List of daily reports with equity and balance information
+        """
+        def _get_daily_reports():
+            # Convert dates to Unix timestamps (start of day)
+            if from_date:
+                from_timestamp = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+            else:
+                # Default to yesterday
+                yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                from_timestamp = int((yesterday - timedelta(days=1)).timestamp())
+            
+            if to_date:
+                # End of day
+                to_timestamp = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+            else:
+                # Default to today
+                to_timestamp = int(datetime.now().timestamp())
+            
+            logger.info("fetching_daily_reports", 
+                       login=login, 
+                       from_date=from_date, 
+                       to_date=to_date,
+                       from_timestamp=from_timestamp,
+                       to_timestamp=to_timestamp,
+                       group=group)
+            
+            # Choose appropriate API call based on parameters
+            if login:
+                # Try DailyRequestByLogins first (more efficient for single login)
+                logger.info("calling_daily_request_by_logins", login=login)
+                try:
+                    reports = self.manager.DailyRequestByLogins([login], from_timestamp, to_timestamp)
+                    logger.info("daily_request_by_logins_response", 
+                               success=reports is not False,
+                               reports_type=type(reports).__name__ if reports else None)
+                except Exception as e:
+                    logger.warning("daily_request_by_logins_failed", error=str(e), error_type=type(e).__name__)
+                    # Fallback to DailyRequestLight
+                    logger.info("calling_daily_request_light_fallback", login=login)
+                    reports = self.manager.DailyRequestLight(login, from_timestamp, to_timestamp)
+            elif group:
+                # Get reports by group pattern
+                logger.info("calling_daily_request_light_by_group", group=group)
+                reports = self.manager.DailyRequestLightByGroup(group, from_timestamp, to_timestamp)
+            else:
+                # Get reports for all accounts (using wildcard group)
+                logger.info("calling_daily_request_light_by_group_all")
+                reports = self.manager.DailyRequestLightByGroup("*", from_timestamp, to_timestamp)
+            
+            logger.info("daily_reports_raw_response", 
+                       reports_type=type(reports).__name__,
+                       reports_is_false=reports is False,
+                       reports_is_none=reports is None,
+                       reports_bool=bool(reports) if reports is not False else False)
+            
+            if reports is False:
+                error = MT5Manager.LastError()
+                error_code = error[1].value if error and len(error) > 1 else None
+                error_msg = error[2] if error and len(error) > 2 else "Unknown error"
+                logger.error("daily_reports_api_returned_false", 
+                           error=error, 
+                           error_code=error_code,
+                           error_message=error_msg)
+                return []
+            
+            if reports is None:
+                logger.warning("daily_reports_api_returned_none")
+                return []
+            
+            reports_len = len(reports) if reports else 0
+            logger.info("daily_reports_received", total=reports_len)
+            
+            if not reports or reports_len == 0:
+                logger.info("no_daily_reports_found_in_response")
+                return []
+            
+            # Parse reports into dataclass
+            result = []
+            for idx, report in enumerate(reports):
+                try:
+                    # Extract date from timestamp - try multiple field names
+                    date_value = None
+                    date_field_used = None
+                    for date_field in ['Datetime', 'DateTime', 'DatetimeDay', 'Date', 'DailyDate']:
+                        if hasattr(report, date_field):
+                            date_value = getattr(report, date_field)
+                            if date_value and date_value > 0:
+                                date_field_used = date_field
+                                break
+                    
+                    if not date_value:
+                        logger.warning("report_missing_datetime", index=idx, 
+                                     has_datetime=hasattr(report, 'DateTime'),
+                                     has_datetime_lower=hasattr(report, 'Datetime'))
+                        continue
+                    
+                    report_date = datetime.fromtimestamp(date_value).strftime('%Y-%m-%d')
+                    
+                    # Get balance and equity fields from MT5 Daily Report
+                    balance = report.Balance if hasattr(report, 'Balance') else 0.0
+                    credit = report.Credit if hasattr(report, 'Credit') else 0.0
+                    
+                    # Get current equity (ProfitEquity = floating equity)
+                    profit_equity = report.ProfitEquity if hasattr(report, 'ProfitEquity') else 0.0
+                    equity = balance + credit + profit_equity
+                    
+                    # Get previous day/month equity and balance
+                    equity_prev_day = report.EquityPrevDay if hasattr(report, 'EquityPrevDay') else 0.0
+                    equity_prev_month = report.EquityPrevMonth if hasattr(report, 'EquityPrevMonth') else 0.0
+                    balance_prev_day = report.BalancePrevDay if hasattr(report, 'BalancePrevDay') else 0.0
+                    balance_prev_month = report.BalancePrevMonth if hasattr(report, 'BalancePrevMonth') else 0.0
+                    
+                    # Floating profit
+                    floating_profit = report.Profit if hasattr(report, 'Profit') else 0.0
+                    
+                    result.append(Mt5DailyReport(
+                        login=report.Login,
+                        date=report_date,
+                        balance=balance,
+                        credit=credit,
+                        equity_prev_day=equity_prev_day,
+                        equity_prev_month=equity_prev_month,
+                        balance_prev_day=balance_prev_day,
+                        balance_prev_month=balance_prev_month,
+                        margin=report.Margin if hasattr(report, 'Margin') else 0.0,
+                        margin_free=report.MarginFree if hasattr(report, 'MarginFree') else 0.0,
+                        floating_profit=floating_profit,
+                        group=report.Group if hasattr(report, 'Group') else "",
+                        currency=report.Currency if hasattr(report, 'Currency') else "USD",
+                        timestamp=date_value,  # Use the date_value we already extracted
+                    ))
+                except Exception as e:
+                    logger.warning("failed_to_parse_daily_report", error=str(e), index=idx)
+                    continue
+            
+            logger.info("daily_reports_fetched", total_reports=len(result))
+            return result
+        
+        return await self._execute_with_retry(_get_daily_reports)
+
+    async def get_realtime_accounts(
+        self, 
+        login: int | None = None,
+        group: str | None = None
+    ) -> list[Mt5RealtimeEquity]:
+        """
+        Get realtime account information.
+        
+        Args:
+            login: Specific account login (optional)
+            group: Group pattern filter (optional, e.g., "test\\*")
+            
+        Returns:
+            List of Mt5RealtimeEquity with current account states
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _get_realtime():
+            logger.info("fetching_realtime_accounts", login=login, group=group)
+            
+            # Get list of users to process
+            users = []
+            if login is not None:
+                # Single user
+                user = self.manager.UserRequest(login)
+                if user is False:
+                    error = MT5Manager.LastError()
+                    error_msg = error[2] if error and len(error) > 2 else "User not found"
+                    error_code = error[1].value if error and len(error) > 1 else None
+                    logger.error("user_request_failed", login=login, error=error_msg, code=error_code)
+                    raise MT5Exception(f"User not found: {error_msg}", error_code)
+                users = [user]
+            else:
+                # Get users by group pattern
+                group_pattern = group if group else "*"
+                users_result = self.manager.UserGetByGroup(group_pattern)
+                if users_result is False:
+                    error = MT5Manager.LastError()
+                    logger.error("users_get_by_group_failed", group=group_pattern, error=error)
+                    return []
+                users = users_result if users_result else []
+            
+            logger.info("processing_users", total=len(users))
+            
+            # Process each user
+            result = []
+            current_time = int(time.time())
+            
+            for user in users:
+                try:
+                    user_login = user.Login if hasattr(user, 'Login') else None
+                    if not user_login:
+                        continue
+                    
+                    user_name = user.Name if hasattr(user, 'Name') else ""
+                    balance = user.Balance if hasattr(user, 'Balance') else 0.0
+                    credit = user.Credit if hasattr(user, 'Credit') else 0.0
+                    user_group = user.Group if hasattr(user, 'Group') else ""
+                    currency = getattr(user, 'Currency', 'USD')
+                    
+                    # Get account info for equity, margin, floating profit
+                    account = self.manager.UserAccountGet(user_login)
+                    
+                    if account is False or account is None:
+                        # No positions, equity = balance + credit
+                        equity = balance + credit
+                        floating_profit = 0.0
+                        margin = 0.0
+                        margin_free = equity
+                        margin_level = 0.0 if margin == 0 else (equity / margin * 100.0)
+                    else:
+                        # Has positions
+                        floating_profit = getattr(account, 'Profit', 0.0)
+                        margin = getattr(account, 'Margin', 0.0)
+                        margin_free = getattr(account, 'MarginFree', 0.0)
+                        margin_level = getattr(account, 'MarginLevel', 0.0)
+                        equity = balance + credit + floating_profit
+                    
+                    result.append(Mt5RealtimeEquity(
+                        login=user_login,
+                        name=user_name,
+                        balance=balance,
+                        credit=credit,
+                        equity=equity,
+                        net_equity=equity - credit,  # Net equity without credit
+                        margin=margin,
+                        margin_free=margin_free,
+                        margin_level=margin_level,
+                        floating_profit=floating_profit,
+                        group=user_group,
+                        currency=currency,
+                        timestamp=current_time,
+                    ))
+                except Exception as e:
+                    logger.warning("failed_to_process_user", 
+                                 login=user_login if 'user_login' in locals() else None, 
+                                 error=str(e))
+                    continue
+            
+            logger.info("realtime_accounts_fetched", total=len(result))
+            return result
+        
+        return await self._execute_with_retry(_get_realtime)
+
+    async def get_deal_history(
+        self,
+        login: int | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[Mt5DealHistory]:
+        """
+        Get deposit, withdrawal, and credit history.
+        
+        Args:
+            login: Specific account login (optional, returns all if not provided)
+            from_date: Start date for history
+            to_date: End date for history
+            
+        Returns:
+            List of Mt5DealHistory records
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _get_deals():
+            logger.info("fetching_deal_history", login=login, from_date=from_date, to_date=to_date)
+            
+            # Convert dates to timestamps
+            if from_date:
+                from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+            else:
+                # Default to 30 days ago
+                from_ts = int((datetime.now() - timedelta(days=30)).timestamp())
+            
+            if to_date:
+                to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+            else:
+                to_ts = int(datetime.now().timestamp())
+            
+            logger.info("deal_history_timestamp_range", from_ts=from_ts, to_ts=to_ts)
+            
+            # Get deals from MT5
+            deals = None
+            if login is not None:
+                # Single account
+                logger.info("calling_deal_request", login=login)
+                deals = self.manager.DealRequest(login, from_ts, to_ts)
+            else:
+                # All accounts - use DealRequestByGroup
+                logger.info("calling_deal_request_by_group_all")
+                deals = self.manager.DealRequestByGroup("*", from_ts, to_ts)
+            
+            if deals is False:
+                error = MT5Manager.LastError()
+                logger.error("deal_request_failed", error=error)
+                return []
+            
+            if not deals:
+                logger.info("no_deals_found")
+                return []
+            
+            logger.info("deals_received", total=len(deals))
+            
+            # Filter for balance operations (deposits, withdrawals, credits)
+            # Action codes: DEAL_BALANCE = 2, DEAL_CREDIT = 3, DEAL_CHARGE = 4, etc.
+            result = []
+            for deal in deals:
+                try:
+                    # Get deal action
+                    action_code = deal.Action if hasattr(deal, 'Action') else None
+                    
+                    # Only include balance operations
+                    # Action 2 = Balance (deposit/withdrawal)
+                    # Action 3 = Credit
+                    # Action 4 = Charge
+                    # Action 6 = Correction
+                    if action_code not in [2, 3, 4, 6]:
+                        continue
+                    
+                    # Map action codes to readable names
+                    action_map = {
+                        2: 'DEPOSIT' if deal.Profit > 0 else 'WITHDRAWAL',
+                        3: 'CREDIT' if deal.Profit > 0 else 'CREDIT_OUT',
+                        4: 'CHARGE',
+                        6: 'CORRECTION',
+                    }
+                    action_name = action_map.get(action_code, 'UNKNOWN')
+                    
+                    deal_id = deal.Deal if hasattr(deal, 'Deal') else 0
+                    deal_login = deal.Login if hasattr(deal, 'Login') else 0
+                    amount = deal.Profit if hasattr(deal, 'Profit') else 0.0
+                    comment = deal.Comment if hasattr(deal, 'Comment') else ""
+                    timestamp = deal.Time if hasattr(deal, 'Time') else 0
+                    
+                    # Get balance after deal (if available)
+                    balance_after = 0.0
+                    if hasattr(deal, 'Storage'):
+                        balance_after = deal.Storage
+                    
+                    datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else ""
+                    
+                    result.append(Mt5DealHistory(
+                        deal_id=deal_id,
+                        login=deal_login,
+                        action=action_name,
+                        amount=amount,
+                        balance_after=balance_after,
+                        comment=comment,
+                        timestamp=timestamp,
+                        datetime_str=datetime_str,
+                    ))
+                except Exception as e:
+                    logger.warning("failed_to_parse_deal", error=str(e))
+                    continue
+            
+            logger.info("deal_history_fetched", total=len(result))
+            return result
+        
+        return await self._execute_with_retry(_get_deals)
 
     async def health_check(self) -> dict[str, Any]:
         try:

@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parents[1]))
+# Add project root to sys.path (parent of 'app' directory)
+sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from app.db import Base
 from app.settings import settings

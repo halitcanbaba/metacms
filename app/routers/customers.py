@@ -31,6 +31,36 @@ router = APIRouter(
 
 
 @router.get(
+    "/by-agent/{agent_id}",
+    response_model=PaginatedResponse[CustomerResponse],
+    summary="Get customers by agent",
+    description="Get paginated list of customers for a specific agent",
+)
+async def get_customers_by_agent(
+    agent_id: int,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Number of records to return"),
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+) -> PaginatedResponse[CustomerResponse]:
+    """
+    Get all customers for a specific agent.
+    
+    - Returns paginated results
+    - Requires authentication
+    """
+    repo = CustomersRepository(db)
+    items, total = await repo.get_by_agent(agent_id, skip=skip, limit=limit)
+    
+    return PaginatedResponse(
+        items=[CustomerResponse.model_validate(item) for item in items],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get(
     "",
     response_model=PaginatedResponse[CustomerResponse],
     summary="List customers",
@@ -102,6 +132,7 @@ async def create_customer(
         email=customer_data.email,
         phone=customer_data.phone,
         address=customer_data.address,
+        agent_id=customer_data.agent_id,
         tags=customer_data.tags,
         metadata=customer_data.meta_data,
     )

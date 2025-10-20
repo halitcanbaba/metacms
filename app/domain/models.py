@@ -45,6 +45,27 @@ class User(Base, TimestampMixin):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
 
 
+class Agent(Base, TimestampMixin):
+    """Agent model for sales/support agents."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    meta_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Relationships
+    customers: Mapped[list["Customer"]] = relationship(
+        "Customer", back_populates="agent", lazy="selectin"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Agent(id={self.id}, name={self.name}, email={self.email})>"
+
+
 class Customer(Base, TimestampMixin):
     """Customer model."""
 
@@ -55,11 +76,13 @@ class Customer(Base, TimestampMixin):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True, index=True)
     tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     external_ids: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     meta_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
+    agent: Mapped["Agent | None"] = relationship("Agent", back_populates="customers", lazy="selectin")
     mt5_accounts: Mapped[list["MT5Account"]] = relationship(
         "MT5Account", back_populates="customer", cascade="all, delete-orphan", lazy="selectin"
     )

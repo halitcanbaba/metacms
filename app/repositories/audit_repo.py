@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.domain.enums import AuditAction
 from app.domain.models import AuditLog
@@ -16,13 +17,18 @@ class AuditRepository:
 
     async def get_by_id(self, log_id: int) -> AuditLog | None:
         """Get audit log by ID."""
-        result = await self.db.execute(select(AuditLog).where(AuditLog.id == log_id))
+        result = await self.db.execute(
+            select(AuditLog).options(selectinload(AuditLog.actor_user)).where(AuditLog.id == log_id)
+        )
         return result.scalar_one_or_none()
 
     async def get_by_request_id(self, request_id: str) -> list[AuditLog]:
         """Get all audit logs for a request ID."""
         result = await self.db.execute(
-            select(AuditLog).where(AuditLog.request_id == request_id).order_by(AuditLog.created_at.asc())
+            select(AuditLog)
+            .options(selectinload(AuditLog.actor_user))
+            .where(AuditLog.request_id == request_id)
+            .order_by(AuditLog.created_at.asc())
         )
         return list(result.scalars().all())
 
@@ -46,6 +52,7 @@ class AuditRepository:
         # Get logs
         result = await self.db.execute(
             select(AuditLog)
+            .options(selectinload(AuditLog.actor_user))
             .where(AuditLog.entity == entity, AuditLog.entity_id == entity_id)
             .offset(skip)
             .limit(limit)
@@ -71,6 +78,7 @@ class AuditRepository:
         # Get logs
         result = await self.db.execute(
             select(AuditLog)
+            .options(selectinload(AuditLog.actor_user))
             .where(AuditLog.actor_id == actor_id)
             .offset(skip)
             .limit(limit)
@@ -81,7 +89,15 @@ class AuditRepository:
         return logs, total
 
     async def list_all(
-        self, skip: int = 0, limit: int = 20, action: AuditAction | None = None, entity: str | None = None
+        self,
+        skip: int = 0,
+        limit: int = 20,
+        action: AuditAction | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        actor_id: int | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
     ) -> tuple[list[AuditLog], int]:
         """
         List all audit logs with pagination and optional filters.
@@ -89,15 +105,23 @@ class AuditRepository:
         Returns:
             Tuple of (logs list, total count)
         """
-        # Build query
-        query = select(AuditLog)
+        # Build query with eager loading of actor_user
+        query = select(AuditLog).options(selectinload(AuditLog.actor_user))
         count_query = select(func.count()).select_from(AuditLog)
 
         filters = []
         if action:
             filters.append(AuditLog.action == action)
-        if entity:
-            filters.append(AuditLog.entity == entity)
+        if entity_type:
+            filters.append(AuditLog.entity == entity_type)
+        if entity_id:
+            filters.append(AuditLog.entity_id == entity_id)
+        if actor_id:
+            filters.append(AuditLog.actor_id == actor_id)
+        if start_date:
+            filters.append(AuditLog.created_at >= start_date)
+        if end_date:
+            filters.append(AuditLog.created_at <= end_date)
 
         if filters:
             query = query.where(*filters)
@@ -118,6 +142,7 @@ class AuditRepository:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         result = await self.db.execute(
             select(AuditLog)
+            .options(selectinload(AuditLog.actor_user))
             .where(AuditLog.created_at >= cutoff)
             .order_by(AuditLog.created_at.desc())
             .limit(limit)
@@ -175,7 +200,12 @@ class AuditRepository:
 
         # Get logs
         result = await self.db.execute(
-            select(AuditLog).where(search_filter).offset(skip).limit(limit).order_by(AuditLog.created_at.desc())
+            select(AuditLog)
+            .options(selectinload(AuditLog.actor_user))
+            .where(search_filter)
+            .offset(skip)
+            .limit(limit)
+            .order_by(AuditLog.created_at.desc())
         )
         logs = list(result.scalars().all())
 

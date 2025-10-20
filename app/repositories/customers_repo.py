@@ -75,6 +75,7 @@ class CustomersRepository:
         email: str | None = None,
         phone: str | None = None,
         address: str | None = None,
+        agent_id: int | None = None,
         tags: list[str] | None = None,
         external_ids: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
@@ -85,9 +86,10 @@ class CustomersRepository:
             email=email, 
             phone=phone, 
             address=address,
-            tags=tags, 
-            external_ids=external_ids or {}, 
-            metadata=metadata or {}
+            agent_id=agent_id,
+            tags=tags if tags else None, 
+            external_ids=external_ids if external_ids else None, 
+            meta_data=metadata if metadata else None
         )
 
         self.db.add(customer)
@@ -95,6 +97,31 @@ class CustomersRepository:
         await self.db.refresh(customer)
 
         return customer
+
+    async def get_by_agent(self, agent_id: int, skip: int = 0, limit: int = 100) -> tuple[list[Customer], int]:
+        """
+        Get all customers for a specific agent with pagination.
+        
+        Returns:
+            Tuple of (customers list, total count)
+        """
+        # Get total count
+        count_result = await self.db.execute(
+            select(func.count()).select_from(Customer).where(Customer.agent_id == agent_id)
+        )
+        total = count_result.scalar_one()
+
+        # Get customers
+        result = await self.db.execute(
+            select(Customer)
+            .where(Customer.agent_id == agent_id)
+            .offset(skip)
+            .limit(limit)
+            .order_by(Customer.created_at.desc())
+        )
+        customers = list(result.scalars().all())
+
+        return customers, total
 
     async def update(self, customer: Customer) -> Customer:
         """Update an existing customer."""

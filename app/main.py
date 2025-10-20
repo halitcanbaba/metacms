@@ -87,6 +87,7 @@ try:
         auth,
         health,
         customers,
+        agents,
         accounts,
         balance,
         positions,
@@ -101,6 +102,7 @@ try:
     app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
     
     # Business logic routers
+    app.include_router(agents.router)
     app.include_router(customers.router)
     app.include_router(accounts.router)
     app.include_router(balance.router)
@@ -110,7 +112,7 @@ try:
     # Webhooks
     app.include_router(webhooks_pipedrive.router)
     
-    logger.info("routers_registered", count=8)
+    logger.info("routers_registered", count=9)
 except ImportError as e:
     logger.warning("router_import_failed", error=str(e))
 # app.include_router(webhooks_pipedrive.router, prefix="/webhooks/pipedrive", tags=["Webhooks"])

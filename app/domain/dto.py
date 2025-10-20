@@ -75,6 +75,39 @@ class UserResponse(UserBase):
     updated_at: datetime
 
 
+# Agent DTOs
+class AgentBase(BaseDTO):
+    """Base agent DTO."""
+
+    name: str
+    email: EmailStr
+    phone: str | None = None
+
+
+class AgentCreate(AgentBase):
+    """Agent creation DTO."""
+
+    pass
+
+
+class AgentUpdate(BaseModel):
+    """Agent update DTO."""
+
+    name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    is_active: bool | None = None
+
+
+class AgentResponse(AgentBase):
+    """Agent response DTO."""
+
+    id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 # Customer DTOs
 class CustomerBase(BaseDTO):
     """Base customer DTO."""
@@ -83,6 +116,7 @@ class CustomerBase(BaseDTO):
     email: EmailStr | None = None
     phone: str | None = None
     address: str | None = None
+    agent_id: int | None = None
     tags: list[str] | None = None
     meta_data: dict[str, Any] | None = None
 
@@ -100,6 +134,7 @@ class CustomerUpdate(BaseModel):
     email: EmailStr | None = None
     phone: str | None = None
     address: str | None = None
+    agent_id: int | None = None
     tags: list[str] | None = None
     meta_data: dict[str, Any] | None = None
 
@@ -126,8 +161,18 @@ class MT5AccountBase(BaseDTO):
 class MT5AccountCreate(MT5AccountBase):
     """MT5 account creation DTO."""
 
-    customer_id: int
+    # Either customer_id OR customer data fields
+    customer_id: int | None = None
+    
+    # Customer data fields (used when auto-creating customer)
+    customer_name: str | None = None
+    customer_email: EmailStr | None = None
+    customer_phone: str | None = None
+    agent_id: int | None = None
+    
+    # MT5 account fields
     password: str = Field(..., min_length=8)
+    name: str | None = None  # Full name to display on MT5 account
 
 
 class MT5AccountUpdate(BaseModel):
@@ -162,6 +207,64 @@ class MT5AccountMoveGroup(BaseModel):
     """MT5 account move group DTO."""
 
     new_group: str
+
+
+class MT5GroupResponse(BaseModel):
+    """MT5 group response DTO."""
+
+    name: str
+    server: str | None = None
+    currency: str | None = None
+    company: str | None = None
+
+
+class MT5DailyReportResponse(BaseModel):
+    """MT5 daily report response DTO - Historical EOD snapshots."""
+
+    login: int
+    date: str  # YYYY-MM-DD format
+    balance: float
+    credit: float
+    equity_prev_day: float  # Previous day equity - KEY FIELD!
+    equity_prev_month: float  # Previous month equity
+    balance_prev_day: float  # Previous day balance
+    balance_prev_month: float  # Previous month balance
+    margin: float
+    margin_free: float
+    floating_profit: float
+    group: str
+    currency: str
+
+
+class MT5RealtimeEquityResponse(BaseModel):
+    """MT5 realtime equity response DTO."""
+
+    login: int
+    name: str
+    balance: float
+    credit: float
+    equity: float  # Balance + Credit + Floating Profit
+    net_equity: float  # Equity - Credit (pure account value without credit)
+    margin: float
+    margin_free: float
+    margin_level: float
+    floating_profit: float
+    group: str
+    currency: str
+    timestamp: int  # Unix timestamp when fetched
+
+
+class MT5DealHistoryResponse(BaseModel):
+    """MT5 deal history response DTO - Deposits, Withdrawals, Credits."""
+
+    deal_id: int
+    login: int
+    action: str  # 'DEPOSIT', 'WITHDRAWAL', 'CREDIT', 'CREDIT_OUT', 'CHARGE', 'CORRECTION'
+    amount: float
+    balance_after: float
+    comment: str
+    timestamp: int
+    datetime_str: str  # Human-readable datetime (YYYY-MM-DD HH:MM:SS)
 
 
 # Balance Operation DTOs
@@ -251,6 +354,9 @@ class AuditLogResponse(BaseDTO):
     request_id: str | None = None
     ip_address: str | None = None
     created_at: datetime
+    
+    # Actor user information
+    actor_user: "UserResponse | None" = None
 
 
 # Pipedrive DTOs
