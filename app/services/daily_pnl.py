@@ -79,12 +79,13 @@ class DailyPnLService:
         deposit = 0.0  # Deposits (DT-tagged)
         withdrawal = 0.0  # Withdrawals (WT-tagged)
         net_deposit = 0.0  # Net deposit (deposits - withdrawals)
+        credit = 0.0  # Credits (CREDIT/CREDIT_OUT actions)
         promotion = 0.0  # Promotions (everything else except REB)
         net_credit_promotion = 0.0  # Sum of credits/bonuses/charges
         rebate = 0.0  # Sum of rebates (REB-tagged deals)
         
         for deal in deal_history:
-            # Classify based on tag (set by comment prefix)
+            # Classify based on tag first, then action
             if deal.tag == "Deposit":
                 deposit += abs(deal.amount)
                 net_deposit += deal.amount
@@ -95,14 +96,19 @@ class DailyPnLService:
                 rebate += deal.amount
                 net_credit_promotion += deal.amount
             elif deal.tag == "Promotion":
+                # Promotion-tagged deals (BALANCE/CREDIT without DT/WT/REB prefix)
                 promotion += abs(deal.amount) if deal.amount > 0 else 0
                 net_credit_promotion += deal.amount
+            elif deal.action in ('CREDIT', 'CREDIT_OUT'):
+                # Credit actions without special tag
+                credit += deal.amount
+                net_credit_promotion += deal.amount
+            elif deal.action in ('CHARGE', 'CORRECTION'):
+                # Charges and corrections
+                net_credit_promotion += deal.amount
             else:
-                # Fallback for any untagged deals
-                if deal.action in ('DEPOSIT', 'WITHDRAWAL'):
-                    net_deposit += deal.amount
-                elif deal.action in ('CREDIT', 'CREDIT_OUT', 'CHARGE', 'CORRECTION'):
-                    net_credit_promotion += deal.amount
+                # Any other unhandled cases
+                pass
         
         # Step 3: Get total IB commissions from daily report
         # MT5 stores IB commissions in daily_agent field
@@ -139,6 +145,7 @@ class DailyPnLService:
             deposit=deposit,
             withdrawal=withdrawal,
             net_deposit=net_deposit,
+            credit=credit,
             promotion=promotion,
             net_credit_promotion=net_credit_promotion,
             total_ib=total_ib,
@@ -248,12 +255,13 @@ class DailyPnLService:
                 deposit = 0.0
                 withdrawal = 0.0
                 net_deposit = 0.0
+                credit = 0.0
                 promotion = 0.0
                 net_credit_promotion = 0.0
                 rebate = 0.0
                 
                 for deal in login_deals:
-                    # Classify based on tag (set by comment prefix)
+                    # Classify based on tag first, then action
                     if deal.tag == "Deposit":
                         deposit += abs(deal.amount)
                         net_deposit += deal.amount
@@ -264,14 +272,19 @@ class DailyPnLService:
                         rebate += deal.amount
                         net_credit_promotion += deal.amount
                     elif deal.tag == "Promotion":
+                        # Promotion-tagged deals (BALANCE/CREDIT without DT/WT/REB prefix)
                         promotion += abs(deal.amount) if deal.amount > 0 else 0
                         net_credit_promotion += deal.amount
+                    elif deal.action in ('CREDIT', 'CREDIT_OUT'):
+                        # Credit actions without special tag
+                        credit += deal.amount
+                        net_credit_promotion += deal.amount
+                    elif deal.action in ('CHARGE', 'CORRECTION'):
+                        # Charges and corrections
+                        net_credit_promotion += deal.amount
                     else:
-                        # Fallback for any untagged deals
-                        if deal.action in ('DEPOSIT', 'WITHDRAWAL'):
-                            net_deposit += deal.amount
-                        elif deal.action in ('CREDIT', 'CREDIT_OUT', 'CHARGE', 'CORRECTION'):
-                            net_credit_promotion += deal.amount
+                        # Any other unhandled cases
+                        pass
                 
                 # Get values from report
                 present_equity = report.present_equity
@@ -292,6 +305,7 @@ class DailyPnLService:
                     deposit=deposit,
                     withdrawal=withdrawal,
                     net_deposit=net_deposit,
+                    credit=credit,
                     promotion=promotion,
                     net_credit_promotion=net_credit_promotion,
                     total_ib=total_ib,
@@ -338,6 +352,7 @@ class DailyPnLService:
                 deposit=0.0,
                 withdrawal=0.0,
                 net_deposit=0.0,
+                credit=0.0,
                 promotion=0.0,
                 net_credit_promotion=0.0,
                 total_ib=0.0,
@@ -354,6 +369,7 @@ class DailyPnLService:
         total_deposit = sum(pnl.deposit for pnl in pnl_list)
         total_withdrawal = sum(pnl.withdrawal for pnl in pnl_list)
         total_net_deposit = sum(pnl.net_deposit for pnl in pnl_list)
+        total_credit = sum(pnl.credit for pnl in pnl_list)
         total_promotion = sum(pnl.promotion for pnl in pnl_list)
         total_net_credit_promotion = sum(pnl.net_credit_promotion for pnl in pnl_list)
         total_ib = sum(pnl.total_ib for pnl in pnl_list)
@@ -377,6 +393,7 @@ class DailyPnLService:
             deposit=total_deposit,
             withdrawal=total_withdrawal,
             net_deposit=total_net_deposit,
+            credit=total_credit,
             promotion=total_promotion,
             net_credit_promotion=total_net_credit_promotion,
             total_ib=total_ib,

@@ -151,6 +151,7 @@ class Mt5DailyPnL:
     deposit: float = 0.0  # Total deposits for the day (DT-tagged deals)
     withdrawal: float = 0.0  # Total withdrawals for the day (WT-tagged deals)
     net_deposit: float = 0.0  # Net deposits for the day (deposits - withdrawals)
+    credit: float = 0.0  # Credit operations for the day (CREDIT action)
     promotion: float = 0.0  # Promotion amount for the day (non-DT/WT/REB tagged deals)
     net_credit_promotion: float = 0.0  # Net credit/promotions for the day
     total_ib: float = 0.0  # Total IB commissions for the day (from daily_agent field)
@@ -1191,31 +1192,32 @@ class MT5ManagerService:
                     tag = ""
                     action_name = ""
                     
-                    # Check comment prefix for classification
+                    # First classify by action code (reliable)
+                    action_map = {
+                        2: 'DEPOSIT' if amount > 0 else 'WITHDRAWAL',
+                        3: 'CREDIT' if amount > 0 else 'CREDIT_OUT',
+                        4: 'CHARGE',
+                        6: 'CORRECTION',
+                    }
+                    action_name = action_map.get(action_code, 'UNKNOWN')
+                    
+                    # Then classify tag by comment prefix
                     if comment_upper.startswith(('DT', 'DT', 'DT', 'DT')):  # dt, Dt, dT, DT
-                        action_name = 'DEPOSIT'
                         tag = "Deposit"
                     elif comment_upper.startswith(('WT', 'WT', 'WT', 'WT')):  # wt, Wt, wT, WT
-                        action_name = 'WITHDRAWAL'
                         tag = "Withdrawal"
                     elif comment_upper.startswith("REB"):
-                        # Rebate handling (keep existing logic)
-                        action_name = 'CREDIT' if amount > 0 else 'CREDIT_OUT'
                         tag = "Rebate"
-                    else:
-                        # Everything else is promotion
-                        action_name = 'PROMOTION'
+                    elif comment_upper.startswith("PRO"):
                         tag = "Promotion"
-                    
-                    # Fallback for action code classification if needed
-                    if not action_name:
-                        action_map = {
-                            2: 'DEPOSIT' if amount > 0 else 'WITHDRAWAL',
-                            3: 'CREDIT' if amount > 0 else 'CREDIT_OUT',
-                            4: 'CHARGE',
-                            6: 'CORRECTION',
-                        }
-                        action_name = action_map.get(action_code, 'UNKNOWN')
+                    else:
+                        # Default tag based on action type for untagged deals
+                        if action_code == 3:  # CREDIT/CREDIT_OUT actions
+                            tag = ""  # Don't tag as promotion, keep empty for credit tracking
+                        elif action_code in [2, 4, 6]:  # DEPOSIT/WITHDRAWAL/CHARGE/CORRECTION without prefix
+                            tag = "Promotion"
+                        else:
+                            tag = ""
                     
                     result.append(Mt5DealHistory(
                         deal_id=deal_id,
