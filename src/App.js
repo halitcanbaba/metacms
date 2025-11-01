@@ -22,6 +22,7 @@ import Accounts from './pages/Accounts';
 import Balance from './pages/Balance';
 import Positions from './pages/Positions';
 import Audit from './pages/Audit';
+import DailyPnL from './pages/DailyPnL';
 
 function App() {
   return (
@@ -47,6 +48,7 @@ function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="balance" element={<Balance />} />
           <Route path="positions" element={<Positions />} />
+          <Route path="daily-pnl" element={<DailyPnL />} />
           <Route path="audit" element={<Audit />} />
         </Route>
 

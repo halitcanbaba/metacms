@@ -19,6 +19,7 @@ import {
   cilWallet,
   cilCash,
   cilChart,
+  cilMoney,
   cilHistory,
 } from '@coreui/icons';
 
@@ -56,6 +57,11 @@ const AppSidebar = ({ visible, onVisibleChange, unfoldable, onUnfoldableChange }
       title: 'Positions',
       to: '/positions',
       icon: cilChart,
+    },
+    {
+      title: 'Daily P&L',
+      to: '/daily-pnl',
+      icon: cilMoney,
     },
     {
       title: 'Audit Logs',

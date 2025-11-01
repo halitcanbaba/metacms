@@ -21,6 +21,7 @@ import {
   CNavLink,
   CTabContent,
   CTabPane,
+  CFormInput,
 } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilBuilding, cilReload, cilStar } from '@coreui/icons';
@@ -34,6 +35,7 @@ const DailyPnL = () => {
   // Monthly Top Winners state
   const [winners, setWinners] = useState([]);
   const [loadingWinners, setLoadingWinners] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM format
   
   // Institution PNL state
   const [institutionDate, setInstitutionDate] = useState(
@@ -50,13 +52,19 @@ const DailyPnL = () => {
       loadInstitutionPnl();
       loadLatestRecords();
     }
-  }, [activeTab]);
+  }, [activeTab, selectedMonth]);
 
   const loadWinners = async () => {
     try {
       setLoadingWinners(true);
       setError('');
-      const response = await api.get('/api/reports/monthly-top-winners');
+      
+      // Parse year and month from selectedMonth (YYYY-MM)
+      const [year, month] = selectedMonth.split('-').map(Number);
+      
+      const response = await api.get('/api/reports/monthly-top-winners', {
+        params: { year, month }
+      });
       setWinners(response.data.winners || []);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load monthly top winners');
@@ -135,6 +143,17 @@ const DailyPnL = () => {
                 </CNavItem>
               </CNav>
               
+              {activeTab === 'winners' && (
+                <div className="d-flex align-items-center gap-2 mb-2">
+                  <CFormInput
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    style={{ width: '160px' }}
+                  />
+                </div>
+              )}
+              
               {activeTab === 'institution' && (
                 <CButton
                   color="success"
@@ -174,9 +193,12 @@ const DailyPnL = () => {
                           <CTableHead color="dark">
                             <CTableRow>
                               <CTableHeaderCell className="text-center" style={{ width: '80px' }}>Rank</CTableHeaderCell>
-                              <CTableHeaderCell className="text-center" style={{ width: '120px' }}>Login</CTableHeaderCell>
-                              <CTableHeaderCell>Customer Name</CTableHeaderCell>
-                              <CTableHeaderCell className="text-end" style={{ width: '150px' }}>Net P&L</CTableHeaderCell>
+                              <CTableHeaderCell className="text-center" style={{ width: '100px' }}>Login</CTableHeaderCell>
+                              <CTableHeaderCell>Account Name</CTableHeaderCell>
+                              <CTableHeaderCell className="text-end" style={{ width: '130px' }}>Current Equity</CTableHeaderCell>
+                              <CTableHeaderCell className="text-end" style={{ width: '120px' }}>Deposit</CTableHeaderCell>
+                              <CTableHeaderCell className="text-end" style={{ width: '120px' }}>Withdrawal</CTableHeaderCell>
+                              <CTableHeaderCell className="text-end" style={{ width: '130px' }}>Net P&L</CTableHeaderCell>
                             </CTableRow>
                           </CTableHead>
                           <CTableBody>
@@ -189,7 +211,10 @@ const DailyPnL = () => {
                                   {winner.rank}
                                 </CTableDataCell>
                                 <CTableDataCell className="text-center">{winner.login}</CTableDataCell>
-                                <CTableDataCell>{winner.customer_name}</CTableDataCell>
+                                <CTableDataCell>{winner.account_name}</CTableDataCell>
+                                <CTableDataCell className="text-end">{formatCurrency(winner.current_equity)}</CTableDataCell>
+                                <CTableDataCell className="text-end">{formatCurrency(winner.total_deposit)}</CTableDataCell>
+                                <CTableDataCell className="text-end">{formatCurrency(winner.total_withdrawal)}</CTableDataCell>
                                 <CTableDataCell className="text-end">
                                   <span style={{ color: winner.total_net_pnl >= 0 ? '#2eb85c' : '#e55353', fontWeight: '500' }}>
                                     {winner.total_net_pnl >= 0 ? '+' : ''}{winner.total_net_pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
