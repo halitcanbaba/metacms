@@ -528,6 +528,10 @@ class MT5ManagerService:
             return result
         return await self._execute_with_retry(_get_positions)
 
+    async def get_all_positions(self) -> list[dict]:
+        """Get all open positions across all accounts."""
+        return await self.get_positions_by_login(login=None)
+    
     async def get_positions_by_login(self, login: int | None = None, symbol_filter: str | None = None) -> list[dict]:
         """Get all open positions for a specific login or all positions."""
         def _get_positions():
@@ -572,14 +576,139 @@ class MT5ManagerService:
                     logger.error("position_parse_error", error=str(e), login=login)
                     continue
             
-            logger.info("positions_retrieved_by_login", 
-                       login=login, 
-                       symbol=symbol_filter,
-                       count=len(result))
+            # Only log if not frequently called (commented for WebSocket performance)
+            # logger.info("positions_retrieved_by_login", login=login, symbol=symbol_filter, count=len(result))
             
             return result
         
         return await self._execute_with_retry(_get_positions)
+
+    async def get_position_history(
+        self,
+        login: int | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[dict]:
+        """
+        Get closed position history for an account.
+        
+        Args:
+            login: Specific account login (required)
+            from_date: Start date for history
+            to_date: End date for history
+            
+        Returns:
+            List of closed position dicts with details
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _get_history():
+            logger.info("fetching_position_history", login=login, from_date=from_date, to_date=to_date)
+            
+            # Convert dates to timestamps
+            if from_date:
+                from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+            else:
+                from_ts = int((datetime.now() - timedelta(days=30)).timestamp())
+            
+            if to_date:
+                to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+            else:
+                to_ts = int(datetime.now().timestamp())
+            
+            # Get closed positions from MT5 using DealRequest
+            if login is None:
+                logger.error("position_history_requires_login")
+                return []
+            
+            # Use DealRequest to get all deals (including closes)
+            deals = self.manager.DealRequest(login, from_ts, to_ts)
+            
+            if deals is False or not deals:
+                error = MT5Manager.LastError()
+                logger.error("deal_request_failed", error=error)
+                return []
+            
+            logger.info("deals_received", total=len(deals))
+            
+            # Group deals by position to find closed positions
+            # Entry: 0=IN (open), 1=OUT (close), 2=INOUT (instant close)
+            position_map = {}
+            result = []
+            
+            for deal in deals:
+                try:
+                    # Get deal details
+                    position_id = deal.Position if hasattr(deal, 'Position') else 0
+                    deal_id = deal.Deal if hasattr(deal, 'Deal') else 0
+                    order_id = deal.Order if hasattr(deal, 'Order') else 0
+                    symbol = deal.Symbol if hasattr(deal, 'Symbol') else ""
+                    action_code = deal.Action if hasattr(deal, 'Action') else None
+                    entry_code = deal.Entry if hasattr(deal, 'Entry') else None
+                    
+                    # Log for debugging
+                    logger.debug("deal_record", 
+                                deal_id=deal_id, 
+                                position_id=position_id,
+                                action=action_code, 
+                                entry=entry_code,
+                                symbol=symbol)
+                    
+                    # Skip if not a market deal (Entry: 0=IN, 1=OUT, 2=INOUT)
+                    # We want closed positions (OUT or INOUT)
+                    if entry_code not in [1, 2]:
+                        continue
+                    
+                    # Determine action type
+                    # Action: 0=BUY, 1=SELL for deals
+                    action_name = 'BUY' if action_code == 0 else 'SELL' if action_code == 1 else 'UNKNOWN'
+                    
+                    volume = deal.Volume / 10000.0 if hasattr(deal, 'Volume') else 0.0
+                    price = deal.Price if hasattr(deal, 'Price') else 0.0
+                    profit = deal.Profit if hasattr(deal, 'Profit') else 0.0
+                    commission = deal.Commission if hasattr(deal, 'Commission') else 0.0
+                    swap = deal.Storage if hasattr(deal, 'Storage') else 0.0
+                    timestamp = deal.Time if hasattr(deal, 'Time') else 0
+                    
+                    # Format datetime
+                    if timestamp:
+                        utc_time = datetime.utcfromtimestamp(timestamp)
+                        datetime_str = utc_time.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        datetime_str = ""
+                    
+                    # Get open and close times
+                    time_create = deal.TimeCreate if hasattr(deal, 'TimeCreate') else 0
+                    time_create_str = ""
+                    if time_create:
+                        time_create_str = datetime.utcfromtimestamp(time_create).strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    result.append({
+                        "position_id": position_id,
+                        "deal_id": deal_id,
+                        "order_id": order_id,
+                        "login": login,
+                        "symbol": symbol,
+                        "action": action_name,
+                        "volume": volume,
+                        "price": price,
+                        "profit": profit,
+                        "commission": commission,
+                        "swap": swap,
+                        "timestamp": timestamp,
+                        "datetime": datetime_str,
+                        "time_create": time_create,
+                        "time_create_str": time_create_str,
+                    })
+                except Exception as e:
+                    logger.warning("failed_to_parse_position_history", error=str(e))
+                    continue
+            
+            logger.info("position_history_filtered", total=len(result))
+            return result
+        
+        return await self._execute_with_retry(_get_history)
 
     async def get_account_info(self, login: int) -> Mt5AccountInfo:
         def _get_info():
@@ -868,7 +997,8 @@ class MT5ManagerService:
             await self.connect()
         
         def _get_realtime():
-            logger.info("fetching_realtime_accounts", login=login, group=group)
+            # Only log if not frequently called (commented for WebSocket performance)
+            # logger.info("fetching_realtime_accounts", login=login, group=group)
             
             # Get list of users to process
             users = []
@@ -892,7 +1022,8 @@ class MT5ManagerService:
                     return []
                 users = users_result if users_result else []
             
-            logger.info("processing_users", total=len(users))
+            # Only log if not frequently called (commented for WebSocket performance)
+            # logger.info("processing_users", total=len(users))
             
             # Process each user
             result = []
@@ -949,7 +1080,8 @@ class MT5ManagerService:
                                  error=str(e))
                     continue
             
-            logger.info("realtime_accounts_fetched", total=len(result))
+            # Only log if not frequently called (commented for WebSocket performance)
+            # logger.info("realtime_accounts_fetched", total=len(result))
             return result
         
         return await self._execute_with_retry(_get_realtime)
@@ -1206,6 +1338,108 @@ class MT5ManagerService:
             return result
         
         return await self._execute_with_retry(_get_trade_deals)
+
+    async def change_group(self, login: int, new_group: str) -> bool:
+        """
+        Change account group in MT5.
+        
+        Args:
+            login: MT5 account login
+            new_group: New group name to move the account to
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            Exception if the operation fails
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _change_group():
+            # Get current user record
+            user = self.manager.UserRequest(login)
+            if user is False:
+                error = MT5Manager.LastError()
+                error_msg = error[2] if error and len(error) > 2 else "User not found"
+                raise Exception(f"Failed to get user {login}: {error_msg}")
+            
+            # Update group
+            user.Group = new_group
+            
+            # Apply update
+            result = self.manager.UserUpdate(user)
+            if result is False:
+                error = MT5Manager.LastError()
+                error_msg = error[2] if error and len(error) > 2 else "Unknown error"
+                raise Exception(f"Failed to change group: {error_msg}")
+            
+            logger.info("group_changed", login=login, new_group=new_group)
+            return True
+        
+        return await self._execute_with_retry(_change_group)
+
+    async def change_password(self, login: int, new_password: str) -> bool:
+        """
+        Change main trading password for MT5 account.
+        
+        Args:
+            login: MT5 account login
+            new_password: New main password
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            Exception if the operation fails
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _change_password():
+            # PasswordChange(login, password_type, new_password)
+            # password_type: 0 = main password, 1 = investor password
+            result = self.manager.PasswordChange(login, 0, new_password)
+            if result is False:
+                error = MT5Manager.LastError()
+                error_msg = error[2] if error and len(error) > 2 else "Unknown error"
+                raise Exception(f"Failed to change password: {error_msg}")
+            
+            logger.info("password_changed", login=login)
+            return True
+        
+        return await self._execute_with_retry(_change_password)
+
+    async def change_investor_password(self, login: int, new_password: str) -> bool:
+        """
+        Change investor (read-only) password for MT5 account.
+        
+        Args:
+            login: MT5 account login
+            new_password: New investor password
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            Exception if the operation fails
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _change_investor_password():
+            # PasswordChange(login, password_type, new_password)
+            # password_type: 0 = main password, 1 = investor password
+            result = self.manager.PasswordChange(login, 1, new_password)
+            if result is False:
+                error = MT5Manager.LastError()
+                error_msg = error[2] if error and len(error) > 2 else "Unknown error"
+                raise Exception(f"Failed to change investor password: {error_msg}")
+            
+            logger.info("investor_password_changed", login=login)
+            return True
+        
+        return await self._execute_with_retry(_change_investor_password)
 
     async def health_check(self) -> dict[str, Any]:
         try:

@@ -21,6 +21,7 @@ from app.domain.dto import (
     MT5DailyPnLResponse,
     MT5RealtimeEquityResponse,
     MT5DealHistoryResponse,
+    MT5TradeHistoryResponse,
     OpenPosition,
     PaginatedResponse,
 )
@@ -666,15 +667,22 @@ async def get_account(
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     
-    # Get live balance from MT5
+    # Get live balance and name from MT5
+    account_name = None
     try:
         mt5_info = await mt5.get_account_info(login)
         account.balance = mt5_info.balance
         account.credit = mt5_info.credit
+        account_name = mt5_info.name
     except Exception as e:
         logger.warning("could_not_fetch_mt5_balance", login=login, error=str(e))
     
-    return MT5AccountResponse.model_validate(account)
+    # Convert to response and add name
+    response = MT5AccountResponse.model_validate(account)
+    if account_name:
+        response.name = account_name
+    
+    return response
 
 
 @router.post("/{login}/reset-password", status_code=status.HTTP_204_NO_CONTENT)
@@ -804,4 +812,274 @@ async def get_account_positions(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch positions: {str(e)}"
+        )
+
+
+@router.get("/{login}/deal-history", response_model=list[MT5DealHistoryResponse])
+async def get_deal_history(
+    login: int,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+) -> list[MT5DealHistoryResponse]:
+    """
+    Get deal history (deposits, withdrawals, credits) for an account.
+    
+    Returns balance operations like:
+    - DEPOSIT: Money added to account
+    - WITHDRAWAL: Money removed from account
+    - CREDIT: Credit added/removed
+    - CHARGE: Commissions, swaps
+    - CORRECTION: Balance corrections
+    
+    Default: Last 30 days of history
+    """
+    # Verify account exists
+    repo = AccountsRepository(db)
+    account = await repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    try:
+        # Get all deal history (defaults to last 30 days)
+        deals = await mt5.get_deal_history(login=login)
+        
+        # Convert to response DTOs
+        result = [
+            MT5DealHistoryResponse(
+                deal_id=deal.deal_id,
+                login=deal.login,
+                action=deal.action,
+                amount=deal.amount,
+                balance_after=deal.balance_after,
+                comment=deal.comment,
+                timestamp=deal.timestamp,
+                datetime_str=deal.datetime_str,
+            )
+            for deal in deals
+        ]
+        
+        logger.info("deal_history_retrieved", login=login, total=len(result))
+        return result
+        
+    except Exception as e:
+        logger.error("deal_history_failed", login=login, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch deal history: {str(e)}"
+        )
+
+
+@router.get("/{login}/trade-history", response_model=list[MT5TradeHistoryResponse])
+async def get_trade_history(
+    login: int,
+    from_date: Optional[date] = Query(None, description="Start date (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+) -> list[MT5TradeHistoryResponse]:
+    """
+    Get trade history (closed positions) for an account.
+    
+    Returns closed trades with:
+    - Symbol traded (e.g., EURUSD, XAUUSD)
+    - Action (BUY or SELL)
+    - Volume in lots
+    - Execution price
+    - Profit/Loss
+    - Commission and Swap fees
+    - Timestamp
+    
+    Default: Last 30 days if no date range specified
+    """
+    # Verify account exists
+    repo = AccountsRepository(db)
+    account = await repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    try:
+        # Get position history (closed positions)
+        positions = await mt5.get_position_history(login=login, from_date=from_date, to_date=to_date)
+        
+        # Convert to response DTOs
+        result = [
+            MT5TradeHistoryResponse(
+                deal_id=pos["deal_id"],
+                login=pos["login"],
+                symbol=pos["symbol"],
+                action=pos["action"],
+                volume=pos["volume"],
+                price=pos["price"],
+                profit=pos["profit"],
+                commission=pos["commission"],
+                swap=pos["swap"],
+                timestamp=pos["timestamp"],
+                datetime=pos["datetime"],
+            )
+            for pos in positions
+        ]
+        
+        logger.info("trade_history_retrieved", login=login, total=len(result), from_date=from_date, to_date=to_date)
+        return result
+        
+    except Exception as e:
+        logger.error("trade_history_failed", login=login, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch trade history: {str(e)}"
+        )
+
+
+@router.put("/{login}/group", status_code=status.HTTP_200_OK)
+async def change_account_group(
+    login: int,
+    group_data: MT5AccountMoveGroup,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_role(UserRole.DEALER)),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+    audit: AuditService = Depends(get_audit_service),
+):
+    """
+    Change account group in MT5.
+    
+    Moves the account to a different trading group with different:
+    - Spreads
+    - Commission rates
+    - Leverage limits
+    - Trading conditions
+    """
+    # Verify account exists
+    repo = AccountsRepository(db)
+    account = await repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    old_group = account.group
+    new_group = group_data.new_group
+    
+    try:
+        # Change group in MT5
+        await mt5.change_group(login=login, new_group=new_group)
+        
+        # Update database
+        account.group = new_group
+        await db.commit()
+        
+        # Audit log
+        await audit.log(
+            action="update",
+            entity="mt5_account",
+            entity_id=account.id,
+            before={"group": old_group},
+            after={"group": new_group},
+        )
+        
+        logger.info("account_group_changed", login=login, old_group=old_group, new_group=new_group)
+        return {"message": f"Account {login} moved to group {new_group}", "old_group": old_group, "new_group": new_group}
+        
+    except Exception as e:
+        logger.error("change_group_failed", login=login, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to change group: {str(e)}"
+        )
+
+
+@router.put("/{login}/password", status_code=status.HTTP_200_OK)
+async def change_account_password(
+    login: int,
+    password_data: MT5AccountPasswordReset,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_role(UserRole.DEALER)),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+    audit: AuditService = Depends(get_audit_service),
+):
+    """
+    Change main trading password for MT5 account.
+    
+    This password allows full trading access:
+    - Open/close positions
+    - Deposit/withdraw
+    - View history
+    """
+    # Verify account exists
+    repo = AccountsRepository(db)
+    account = await repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    try:
+        # Change password in MT5
+        await mt5.change_password(login=login, new_password=password_data.new_password)
+        
+        # Audit log (don't log the actual password)
+        await audit.log(
+            action="update",
+            entity="mt5_account",
+            entity_id=account.id,
+            before={"password": "***"},
+            after={"password": "***"},
+        )
+        
+        logger.info("account_password_changed", login=login)
+        return {"message": f"Password changed successfully for account {login}"}
+        
+    except Exception as e:
+        logger.error("change_password_failed", login=login, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to change password: {str(e)}"
+        )
+
+
+@router.put("/{login}/investor-password", status_code=status.HTTP_200_OK)
+async def change_investor_password(
+    login: int,
+    password_data: MT5AccountPasswordReset,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_role(UserRole.DEALER)),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+    audit: AuditService = Depends(get_audit_service),
+):
+    """
+    Change investor (read-only) password for MT5 account.
+    
+    Investor password allows:
+    - View positions and history
+    - Monitor account performance
+    
+    Does NOT allow:
+    - Trading
+    - Deposits/withdrawals
+    - Account modifications
+    """
+    # Verify account exists
+    repo = AccountsRepository(db)
+    account = await repo.get_by_login(login)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    try:
+        # Change investor password in MT5
+        await mt5.change_investor_password(login=login, new_password=password_data.new_password)
+        
+        # Audit log (don't log the actual password)
+        await audit.log(
+            action="update",
+            entity="mt5_account",
+            entity_id=account.id,
+            before={"investor_password": "***"},
+            after={"investor_password": "***"},
+        )
+        
+        logger.info("investor_password_changed", login=login)
+        return {"message": f"Investor password changed successfully for account {login}"}
+        
+    except Exception as e:
+        logger.error("change_investor_password_failed", login=login, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to change investor password: {str(e)}"
         )

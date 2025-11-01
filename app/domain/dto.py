@@ -143,8 +143,8 @@ class CustomerResponse(CustomerBase):
     """Customer response DTO."""
 
     id: int
+    agent: "AgentResponse | None" = None
     external_ids: dict[str, Any] | None = None
-    mt5_accounts: list["MT5AccountResponse"] = []
     created_at: datetime
     updated_at: datetime
 
@@ -192,6 +192,8 @@ class MT5AccountResponse(MT5AccountBase):
     status: MT5AccountStatus
     balance: float
     credit: float
+    name: str | None = None
+    customer: "CustomerResponse | None" = None
     external_ids: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
@@ -328,6 +330,22 @@ class MT5DealHistoryResponse(BaseModel):
     comment: str
     timestamp: int
     datetime_str: str  # Human-readable datetime (YYYY-MM-DD HH:MM:SS)
+
+
+class MT5TradeHistoryResponse(BaseModel):
+    """MT5 trade history response DTO - Closed positions/trades."""
+
+    deal_id: int
+    login: int
+    symbol: str
+    action: str  # 'BUY' or 'SELL'
+    volume: float  # Volume in lots
+    price: float  # Execution price
+    profit: float  # Profit/Loss
+    commission: float  # Commission charged
+    swap: float  # Swap/Storage fees
+    timestamp: int  # Unix timestamp
+    datetime: str  # Human-readable datetime (YYYY-MM-DD HH:MM:SS)
 
 
 # Balance Operation DTOs
@@ -530,3 +548,4 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 # Rebuild models to resolve forward references
 CustomerResponse.model_rebuild()
+MT5AccountResponse.model_rebuild()

@@ -10,7 +10,7 @@ from app.settings import settings
 # Create async engine
 engine = create_async_engine(
     settings.effective_database_url,
-    echo=settings.app_env == "dev",
+    echo=False,  # Disable SQL query logging for better performance
     future=True,
     pool_pre_ping=True,
 )
