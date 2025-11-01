@@ -10,32 +10,45 @@ import AppHeader from './AppHeader';
 const DefaultLayout = () => {
   const [sidebarShow, setSidebarShow] = useState(true);
   const [sidebarNarrow, setSidebarNarrow] = useState(true);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 993);
 
   useEffect(() => {
     const handleResize = () => {
-      const mobile = window.innerWidth < 992;
+      const mobile = window.innerWidth < 993; // 993px altında mobil mod
       setIsMobile(mobile);
+      
+      // Sidebar HER ZAMAN görünür - mobile'da narrow
+      setSidebarShow(true);
+      
       if (mobile) {
-        // Mobile'da sidebar her zaman göster ve narrow yap
-        setSidebarShow(true);
+        // Mobile'da sidebar HER ZAMAN narrow
         setSidebarNarrow(true);
-      } else {
-        // Desktop'ta normal davranış
-        setSidebarShow(true);
       }
     };
 
     handleResize(); // Initial check
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    
+    // Her 100ms kontrol et
+    const interval = setInterval(handleResize, 100);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearInterval(interval);
+    };
   }, []);
+
+  // Sidebar'ın hiçbir zaman kapanmaması için visibility kontrolü
+  const handleSidebarVisibilityChange = (value) => {
+    // Sidebar'ı ASLA kapatma
+    setSidebarShow(true);
+  };
 
   return (
     <div>
       <AppSidebar 
-        visible={sidebarShow}
-        onVisibleChange={setSidebarShow}
+        visible={true} // Her zaman görünür
+        onVisibleChange={handleSidebarVisibilityChange}
         narrow={isMobile ? true : sidebarNarrow}
         onNarrowChange={isMobile ? undefined : setSidebarNarrow}
         isMobile={isMobile}

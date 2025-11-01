@@ -9,27 +9,210 @@ body {
   background-color: #212529 !important;
 }
 
-/* Sidebar styling */
-.sidebar {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 100;
-  background-color: #1a1d21 !important;
+/* Sidebar styling - MAXIMUM PRIORITY */
+.sidebar,
+.sidebar[style],
+div.sidebar {
+  position: fixed !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  z-index: 1040 !important;
+  background-color: #212631 !important;
+  transition: width 0.15s ease-in-out !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: translateX(0) !important;
+  margin-inline-start: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* Sidebar her zaman görünür olmalı */
+.sidebar.sidebar-show,
+.sidebar.sidebar-show[style] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Narrow (collapsed) sidebar */
+.sidebar-narrow,
+.sidebar-narrow[style] {
+  width: 56px !important;
+  min-width: 56px !important;
+  max-width: 56px !important;
+}
+
+/* Expanded sidebar */
+.sidebar:not(.sidebar-narrow),
+.sidebar:not(.sidebar-narrow)[style] {
+  width: 256px !important;
+  min-width: 256px !important;
 }
 
 /* Make sure content doesn't go under sidebar */
 .wrapper {
   margin-left: 256px;
   background-color: #1a1d21 !important;
+  transition: margin-left 0.15s ease-in-out;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .wrapper {
-    margin-left: 0;
+/* Narrow sidebar için wrapper ayarı */
+.sidebar-narrow-wrapper {
+  margin-left: 56px !important;
+}
+
+.sidebar-expanded-wrapper {
+  margin-left: 256px !important;
+}
+
+/* Responsive adjustments - Mobile'da sidebar her zaman narrow ve görünür */
+@media (max-width: 1200px) {
+  .sidebar,
+  .sidebar[style],
+  div.sidebar {
+    width: 56px !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    position: fixed !important;
+    left: 0 !important;
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
   }
+  
+  .wrapper {
+    margin-left: 56px !important;
+  }
+}
+
+@media (max-width: 500px) {
+  .sidebar,
+  .sidebar[style],
+  div.sidebar,
+  .sidebar.sidebar-show,
+  .sidebar.sidebar-hide {
+    width: 56px !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    position: fixed !important;
+    left: 0 !important;
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+  }
+  
+  .wrapper {
+    margin-left: 56px !important;
+  }
+}
+
+/* Tablet ve altı için */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 56px !important;
+  }
+  
+  .wrapper {
+    margin-left: 56px !important;
+  }
+}
+
+/* Çok küçük ekranlar için */
+@media (max-width: 576px) {
+  .sidebar {
+    width: 56px !important;
+  }
+  
+  .wrapper {
+    margin-left: 56px !important;
+  }
+}
+
+/* CoreUI sidebar override - her zaman görünür */
+.sidebar {
+  visibility: visible !important;
+  transform: translateX(0) !important;
+  display: block !important;
+  opacity: 1 !important;
+  margin-inline-start: 0 !important; /* CoreUI'nin ekran dışına itme kuralını iptal et */
+  margin-left: 0 !important;
+}
+
+.sidebar.sidebar-show {
+  visibility: visible !important;
+  transform: translateX(0) !important;
+  display: block !important;
+  opacity: 1 !important;
+  margin-inline-start: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* CoreUI'nin 991.98px kuralını override et */
+@media (max-width: 991.98px) {
+  .sidebar:not(.sidebar-end):not(.show),
+  .sidebar:not(.sidebar-end),
+  .sidebar {
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+    transform: translateX(0) !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    left: 0 !important;
+    position: fixed !important;
+  }
+}
+
+/* Sidebar backdrop'u kaldır (overlay olmasın) */
+.sidebar-backdrop {
+  display: none !important;
+}
+
+/* Mobile'da sidebar overlay olmasın - ZORLA GÖSTER */
+@media (max-width: 3000px) {
+  .sidebar,
+  .sidebar[style],
+  .sidebar.sidebar-show,
+  .sidebar.sidebar-hide,
+  .sidebar:not(.sidebar-show) {
+    position: fixed !important;
+    transform: translateX(0) !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    left: 0 !important;
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* Sidebar navigation items */
+.sidebar .nav-link {
+  display: flex !important;
+  align-items: center !important;
+  padding: 0.75rem 1rem !important;
+  transition: background-color 0.15s ease-in-out !important;
+}
+
+.sidebar-narrow .nav-link {
+  justify-content: center !important;
+  padding: 0.75rem 0.5rem !important;
+}
+
+.sidebar-narrow .nav-text {
+  display: none !important;
+}
+
+.sidebar .nav-icon {
+  margin-right: 0.5rem !important;
+}
+
+.sidebar-narrow .nav-icon {
+  margin-right: 0 !important;
 }
 
 /* Card styling - darker */

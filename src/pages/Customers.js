@@ -154,8 +154,6 @@ const Customers = () => {
     <>
       <CRow>
         <CCol>
-          <h1 className="mb-4">Customers</h1>
-
           {error && (
             <CAlert color="danger" dismissible onClose={() => setError('')}>
               {error}

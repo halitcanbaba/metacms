@@ -12,6 +12,70 @@ code {
     monospace;
 }
 
+/* Clickable table rows */
+.table tbody tr[style*="cursor: pointer"]:hover {
+  background-color: rgba(0, 0, 0, 0.075);
+}
+
+/* CRITICAL: Force sidebar to always show - Override CoreUI - MAXIMUM SPECIFICITY */
+.sidebar,
+.sidebar[style],
+div.sidebar,
+.sidebar[style*="display"],
+.sidebar[style*="visibility"],
+.sidebar[style*="transform"],
+.sidebar.sidebar-show,
+.sidebar.sidebar-hide,
+.sidebar:not(.sidebar-show),
+.sidebar:not(.sidebar-end):not(.show),
+.sidebar:not(.sidebar-end) {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: translateX(0) !important;
+  position: fixed !important;
+  left: 0 !important;
+  background-color: #212631 !important;
+  margin-inline-start: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* Her pixel için override */
+@media screen {
+  .sidebar,
+  .sidebar[style] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* CoreUI 991.98px kuralını override et */
+@media (max-width: 991.98px) {
+  .sidebar:not(.sidebar-end):not(.show),
+  .sidebar:not(.sidebar-end),
+  .sidebar,
+  .sidebar[style] {
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+    transform: translateX(0) !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    left: 0 !important;
+    position: fixed !important;
+  }
+}
+
+/* Sidebar custom background color */
+.sidebar.sidebar-narrow,
+.sidebar.sidebar-fixed {
+  background-color: #212631 !important;
+}
+
 /* Fix for CoreUI sidebar icons in narrow mode */
 .sidebar-narrow .nav-icon {
   display: inline-block !important;

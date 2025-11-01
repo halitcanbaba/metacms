@@ -55,11 +55,7 @@ const Users = () => {
 
   const usersPerPage = 10;
 
-  useEffect(() => {
-    fetchUsers();
-  }, [currentPage, searchTerm]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = React.useCallback(async () => {
     setLoading(true);
     try {
       const skip = (currentPage - 1) * usersPerPage;
@@ -78,7 +74,11 @@ const Users = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, searchTerm]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
 
   const handleOpenModal = (user = null) => {
     if (user) {

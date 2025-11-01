@@ -2,6 +2,7 @@
  * MT5 Accounts Page - List and Create accounts
  */
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CButton,
   CCard,
@@ -27,15 +28,22 @@ import {
   CTableRow,
   CAlert,
   CBadge,
+  CDropdown,
+  CDropdownToggle,
+  CDropdownMenu,
+  CDropdownItem,
 } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilPlus, cilReload } from '@coreui/icons';
+import { cilPlus, cilReload, cilSettings, cilLockLocked, cilUser } from '@coreui/icons';
 import { accountsService } from '../services/accounts';
 import { customersService } from '../services/customers';
 import { getAgents } from '../services/agents';
+import api from '../services/api';
 
 const Accounts = () => {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState([]);
+  const [realtimeData, setRealtimeData] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [agents, setAgents] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -44,6 +52,22 @@ const Accounts = () => {
   const [createMode, setCreateMode] = useState('existing'); // 'existing' or 'new'
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  
+  // Action modals
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showInvestorPasswordModal, setShowInvestorPasswordModal] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  
+  // Action form data
+  const [actionFormData, setActionFormData] = useState({
+    newGroup: '',
+    newPassword: '',
+    confirmPassword: '',
+    investorPassword: '',
+    confirmInvestorPassword: '',
+  });
 
   // Form state
   const [formData, setFormData] = useState({
@@ -66,16 +90,18 @@ const Accounts = () => {
     try {
       setLoading(true);
       setError('');
-      const [accountsData, customersData, agentsData, groupsData] = await Promise.all([
+      const [accountsData, customersData, agentsData, groupsData, realtimeResponse] = await Promise.all([
         accountsService.getAll({ limit: 100 }),
         customersService.getAll({ limit: 100 }),
         getAgents({ limit: 100, active_only: true }),
         accountsService.getGroups(),
+        api.get('/api/accounts/realtime'),
       ]);
       setAccounts(accountsData.items || []);
       setCustomers(customersData.items || []);
       setAgents(agentsData.items || []);
       setGroups(groupsData || []);
+      setRealtimeData(realtimeResponse.data || []);
     } catch (err) {
       setError('Failed to load data: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -207,12 +233,138 @@ const Accounts = () => {
     }
   };
 
+  const getEquityForAccount = (login) => {
+    const realtimeAccount = realtimeData.find(rt => rt.login === login);
+    return realtimeAccount?.equity || 0;
+  };
+
+  const getNameForAccount = (login) => {
+    const realtimeAccount = realtimeData.find(rt => rt.login === login);
+    return realtimeAccount?.name || '-';
+  };
+
+  const formatNumber = (value) => {
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value || 0);
+  };
+
+  const handleRowClick = (login) => {
+    navigate(`/account/${login}`);
+  };
+
+  // Action handlers
+  const handleOpenGroupModal = (account, e) => {
+    e.stopPropagation();
+    setSelectedAccount(account);
+    setActionFormData({ ...actionFormData, newGroup: account.group });
+    setShowGroupModal(true);
+  };
+
+  const handleOpenPasswordModal = (account, e) => {
+    e.stopPropagation();
+    setSelectedAccount(account);
+    setActionFormData({ ...actionFormData, newPassword: '', confirmPassword: '' });
+    setShowPasswordModal(true);
+  };
+
+  const handleOpenInvestorPasswordModal = (account, e) => {
+    e.stopPropagation();
+    setSelectedAccount(account);
+    setActionFormData({ ...actionFormData, investorPassword: '', confirmInvestorPassword: '' });
+    setShowInvestorPasswordModal(true);
+  };
+
+  const handleActionInputChange = (e) => {
+    const { name, value } = e.target;
+    setActionFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleChangeGroup = async (e) => {
+    e.preventDefault();
+    if (!selectedAccount) return;
+
+    try {
+      setActionLoading(true);
+      setError('');
+      await api.put(`/api/accounts/${selectedAccount.login}/group`, {
+        new_group: actionFormData.newGroup
+      });
+      setSuccess(`Group changed successfully for account ${selectedAccount.login}`);
+      setShowGroupModal(false);
+      loadData();
+    } catch (err) {
+      setError('Failed to change group: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (!selectedAccount) return;
+
+    if (actionFormData.newPassword !== actionFormData.confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (actionFormData.newPassword.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      setError('');
+      await api.put(`/api/accounts/${selectedAccount.login}/password`, {
+        new_password: actionFormData.newPassword
+      });
+      setSuccess(`Password changed successfully for account ${selectedAccount.login}`);
+      setShowPasswordModal(false);
+      setActionFormData({ ...actionFormData, newPassword: '', confirmPassword: '' });
+    } catch (err) {
+      setError('Failed to change password: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleChangeInvestorPassword = async (e) => {
+    e.preventDefault();
+    if (!selectedAccount) return;
+
+    if (actionFormData.investorPassword !== actionFormData.confirmInvestorPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (actionFormData.investorPassword.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      setError('');
+      await api.put(`/api/accounts/${selectedAccount.login}/investor-password`, {
+        new_password: actionFormData.investorPassword
+      });
+      setSuccess(`Investor password changed successfully for account ${selectedAccount.login}`);
+      setShowInvestorPasswordModal(false);
+      setActionFormData({ ...actionFormData, investorPassword: '', confirmInvestorPassword: '' });
+    } catch (err) {
+      setError('Failed to change investor password: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   return (
     <>
       <CRow>
         <CCol>
-          <h1 className="mb-4">MT5 Accounts</h1>
-
           {error && (
             <CAlert color="danger" dismissible onClose={() => setError('')}>
               {error}
@@ -261,40 +413,76 @@ const Accounts = () => {
                   <CTableHead>
                     <CTableRow>
                       <CTableHeaderCell>Login</CTableHeaderCell>
+                      <CTableHeaderCell>Name</CTableHeaderCell>
                       <CTableHeaderCell>Customer</CTableHeaderCell>
                       <CTableHeaderCell>Agent</CTableHeaderCell>
                       <CTableHeaderCell>Group</CTableHeaderCell>
                       <CTableHeaderCell>Balance</CTableHeaderCell>
+                      <CTableHeaderCell>Equity</CTableHeaderCell>
                       <CTableHeaderCell>Leverage</CTableHeaderCell>
                       <CTableHeaderCell>Currency</CTableHeaderCell>
                       <CTableHeaderCell>Status</CTableHeaderCell>
                       <CTableHeaderCell>Created</CTableHeaderCell>
+                      <CTableHeaderCell>Actions</CTableHeaderCell>
                     </CTableRow>
                   </CTableHead>
                   <CTableBody>
-                    {accounts.map((account) => (
-                      <CTableRow key={account.login}>
-                        <CTableDataCell>
-                          <strong>{account.login}</strong>
-                        </CTableDataCell>
-                        <CTableDataCell>{account.customer?.name || '-'}</CTableDataCell>
-                        <CTableDataCell>{account.customer?.agent?.name || '-'}</CTableDataCell>
-                        <CTableDataCell>{account.group}</CTableDataCell>
-                        <CTableDataCell>
-                          <strong>${account.balance?.toFixed(2) || '0.00'}</strong>
-                        </CTableDataCell>
-                        <CTableDataCell>1:{account.leverage}</CTableDataCell>
-                        <CTableDataCell>{account.currency}</CTableDataCell>
-                        <CTableDataCell>
-                          <CBadge color={getStatusColor(account.status)}>
-                            {account.status || 'Unknown'}
-                          </CBadge>
-                        </CTableDataCell>
-                        <CTableDataCell>
-                          {new Date(account.created_at).toLocaleDateString()}
-                        </CTableDataCell>
-                      </CTableRow>
-                    ))}
+                    {accounts.map((account) => {
+                      const equity = getEquityForAccount(account.login);
+                      const name = getNameForAccount(account.login);
+                      return (
+                        <CTableRow 
+                          key={account.login}
+                          onClick={() => handleRowClick(account.login)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <CTableDataCell>
+                            <strong>{account.login}</strong>
+                          </CTableDataCell>
+                          <CTableDataCell>{name}</CTableDataCell>
+                          <CTableDataCell>{account.customer?.name || '-'}</CTableDataCell>
+                          <CTableDataCell>{account.customer?.agent?.name || '-'}</CTableDataCell>
+                          <CTableDataCell>{account.group}</CTableDataCell>
+                          <CTableDataCell>
+                            {formatNumber(account.balance)}
+                          </CTableDataCell>
+                          <CTableDataCell>
+                            {formatNumber(equity)}
+                          </CTableDataCell>
+                          <CTableDataCell>1:{account.leverage}</CTableDataCell>
+                          <CTableDataCell>{account.currency}</CTableDataCell>
+                          <CTableDataCell>
+                            <CBadge color={getStatusColor(account.status)}>
+                              {account.status || 'Unknown'}
+                            </CBadge>
+                          </CTableDataCell>
+                          <CTableDataCell>
+                            {new Date(account.created_at).toLocaleDateString()}
+                          </CTableDataCell>
+                          <CTableDataCell onClick={(e) => e.stopPropagation()}>
+                            <CDropdown>
+                              <CDropdownToggle color="secondary" size="sm">
+                                <CIcon icon={cilSettings} /> Actions
+                              </CDropdownToggle>
+                              <CDropdownMenu>
+                                <CDropdownItem onClick={(e) => handleOpenGroupModal(account, e)}>
+                                  <CIcon icon={cilSettings} className="me-2" />
+                                  Change Group
+                                </CDropdownItem>
+                                <CDropdownItem onClick={(e) => handleOpenPasswordModal(account, e)}>
+                                  <CIcon icon={cilLockLocked} className="me-2" />
+                                  Change Password
+                                </CDropdownItem>
+                                <CDropdownItem onClick={(e) => handleOpenInvestorPasswordModal(account, e)}>
+                                  <CIcon icon={cilUser} className="me-2" />
+                                  Change Investor Password
+                                </CDropdownItem>
+                              </CDropdownMenu>
+                            </CDropdown>
+                          </CTableDataCell>
+                        </CTableRow>
+                      );
+                    })}
                   </CTableBody>
                 </CTable>
               )}
@@ -502,6 +690,144 @@ const Accounts = () => {
             </CButton>
             <CButton color="primary" type="submit">
               Create Account
+            </CButton>
+          </CModalFooter>
+        </CForm>
+      </CModal>
+
+      {/* Change Group Modal */}
+      <CModal visible={showGroupModal} onClose={() => setShowGroupModal(false)}>
+        <CModalHeader>
+          <CModalTitle>Change Group - Account {selectedAccount?.login}</CModalTitle>
+        </CModalHeader>
+        <CForm onSubmit={handleChangeGroup}>
+          <CModalBody>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>Current Group</CFormLabel>
+                <CFormInput value={selectedAccount?.group || ''} disabled />
+              </CCol>
+            </CRow>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>New Group *</CFormLabel>
+                <CFormSelect
+                  name="newGroup"
+                  value={actionFormData.newGroup}
+                  onChange={handleActionInputChange}
+                  required
+                >
+                  {groups.map((group) => (
+                    <option key={group.name} value={group.name}>
+                      {group.name}
+                    </option>
+                  ))}
+                </CFormSelect>
+              </CCol>
+            </CRow>
+          </CModalBody>
+          <CModalFooter>
+            <CButton color="secondary" onClick={() => setShowGroupModal(false)} disabled={actionLoading}>
+              Cancel
+            </CButton>
+            <CButton color="primary" type="submit" disabled={actionLoading}>
+              {actionLoading ? <CSpinner size="sm" /> : 'Change Group'}
+            </CButton>
+          </CModalFooter>
+        </CForm>
+      </CModal>
+
+      {/* Change Password Modal */}
+      <CModal visible={showPasswordModal} onClose={() => setShowPasswordModal(false)}>
+        <CModalHeader>
+          <CModalTitle>Change Password - Account {selectedAccount?.login}</CModalTitle>
+        </CModalHeader>
+        <CForm onSubmit={handleChangePassword}>
+          <CModalBody>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>New Password *</CFormLabel>
+                <CFormInput
+                  type="password"
+                  name="newPassword"
+                  value={actionFormData.newPassword}
+                  onChange={handleActionInputChange}
+                  placeholder="Enter new password"
+                  minLength={6}
+                  required
+                />
+                <small className="text-muted">Minimum 6 characters</small>
+              </CCol>
+            </CRow>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>Confirm Password *</CFormLabel>
+                <CFormInput
+                  type="password"
+                  name="confirmPassword"
+                  value={actionFormData.confirmPassword}
+                  onChange={handleActionInputChange}
+                  placeholder="Confirm new password"
+                  minLength={6}
+                  required
+                />
+              </CCol>
+            </CRow>
+          </CModalBody>
+          <CModalFooter>
+            <CButton color="secondary" onClick={() => setShowPasswordModal(false)} disabled={actionLoading}>
+              Cancel
+            </CButton>
+            <CButton color="primary" type="submit" disabled={actionLoading}>
+              {actionLoading ? <CSpinner size="sm" /> : 'Change Password'}
+            </CButton>
+          </CModalFooter>
+        </CForm>
+      </CModal>
+
+      {/* Change Investor Password Modal */}
+      <CModal visible={showInvestorPasswordModal} onClose={() => setShowInvestorPasswordModal(false)}>
+        <CModalHeader>
+          <CModalTitle>Change Investor Password - Account {selectedAccount?.login}</CModalTitle>
+        </CModalHeader>
+        <CForm onSubmit={handleChangeInvestorPassword}>
+          <CModalBody>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>New Investor Password *</CFormLabel>
+                <CFormInput
+                  type="password"
+                  name="investorPassword"
+                  value={actionFormData.investorPassword}
+                  onChange={handleActionInputChange}
+                  placeholder="Enter new investor password"
+                  minLength={6}
+                  required
+                />
+                <small className="text-muted">Minimum 6 characters (Read-only access)</small>
+              </CCol>
+            </CRow>
+            <CRow className="mb-3">
+              <CCol>
+                <CFormLabel>Confirm Investor Password *</CFormLabel>
+                <CFormInput
+                  type="password"
+                  name="confirmInvestorPassword"
+                  value={actionFormData.confirmInvestorPassword}
+                  onChange={handleActionInputChange}
+                  placeholder="Confirm new investor password"
+                  minLength={6}
+                  required
+                />
+              </CCol>
+            </CRow>
+          </CModalBody>
+          <CModalFooter>
+            <CButton color="secondary" onClick={() => setShowInvestorPasswordModal(false)} disabled={actionLoading}>
+              Cancel
+            </CButton>
+            <CButton color="primary" type="submit" disabled={actionLoading}>
+              {actionLoading ? <CSpinner size="sm" /> : 'Change Investor Password'}
             </CButton>
           </CModalFooter>
         </CForm>
