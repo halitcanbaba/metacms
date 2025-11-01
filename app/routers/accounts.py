@@ -18,6 +18,7 @@ from app.domain.dto import (
     MT5AccountMoveGroup,
     MT5GroupResponse,
     MT5DailyReportResponse,
+    MT5DailyPnLResponse,
     MT5RealtimeEquityResponse,
     MT5DealHistoryResponse,
     OpenPosition,
@@ -29,6 +30,7 @@ from app.repositories.accounts_repo import AccountsRepository
 from app.repositories.customers_repo import CustomersRepository
 from app.services.mt5_manager import MT5ManagerService
 from app.services.audit import AuditService
+from app.services.daily_pnl import DailyPnLService
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -229,21 +231,41 @@ async def get_daily_reports(
     mt5: MT5ManagerService = Depends(get_mt5_manager),
 ) -> list[MT5DailyReportResponse]:
     """
-    Get daily reports with historical equity data.
+    Get comprehensive daily reports with complete MT5 account data.
     
-    This endpoint retrieves daily snapshots of account states including:
-    - Balance
-    - Credit
-    - Equity (Balance + Credit + Floating Profit/Loss)
-    - Margin information
+    This endpoint retrieves daily snapshots of account states from MT5's DailyRequestLightByGroupAll method, including:
+    
+    **Account State:**
+    - Balance, Credit, Margin, Margin Free, Margin Level, Leverage
+    - Equity (current and previous day/month)
     - Floating Profit/Loss
+    
+    **Daily Transaction Breakdown:**
+    - Balance operations (deposits/withdrawals)
+    - Credit operations, Corrections, Bonuses
+    - Commissions (fees, instant, round)
+    - Interest, Dividends, Taxes
+    - Closed Profit, Storage/Swap
+    - Stop-out compensations
+    
+    **Agent & Commission Data:**
+    - Daily and monthly agent commissions
+    - Daily and monthly commissions
+    
+    **Profit Analysis:**
+    - Equity profit (floating)
+    - Storage profit
+    - Assets and Liabilities profit
+    
+    **Account Info:**
+    - Name, Email, Company, Group, Currency
     
     **Examples:**
     - Get yesterday's report for all accounts: `GET /api/accounts/daily-reports`
     - Get specific account for a date range: `GET /api/accounts/daily-reports?login=350001&from_date=2025-10-01&to_date=2025-10-16`
     - Get all accounts in a group: `GET /api/accounts/daily-reports?group=demo\\*&from_date=2025-10-15`
     
-    **Note:** Reports are generated at end-of-day (EOD) by MT5 server.
+    **Note:** Reports are generated at end-of-day (EOD) by MT5 server and contain all available fields from the MT5 API.
     """
     try:
         # Parse date strings to date objects
@@ -287,9 +309,52 @@ async def get_daily_reports(
                 balance_prev_month=report.balance_prev_month,
                 margin=report.margin,
                 margin_free=report.margin_free,
+                margin_level=report.margin_level,
+                margin_leverage=report.margin_leverage,
                 floating_profit=report.floating_profit,
                 group=report.group,
                 currency=report.currency,
+                currency_digits=report.currency_digits,
+                timestamp=report.timestamp,
+                datetime_prev=report.datetime_prev,
+                
+                # Account info
+                name=report.name,
+                email=report.email,
+                company=report.company,
+                
+                # Agent commissions
+                agent_daily=report.agent_daily,
+                agent_monthly=report.agent_monthly,
+                commission_daily=report.commission_daily,
+                commission_monthly=report.commission_monthly,
+                
+                # Daily transactions breakdown
+                daily_balance=report.daily_balance,
+                daily_credit=report.daily_credit,
+                daily_charge=report.daily_charge,
+                daily_correction=report.daily_correction,
+                daily_bonus=report.daily_bonus,
+                daily_comm_fee=report.daily_comm_fee,
+                daily_comm_instant=report.daily_comm_instant,
+                daily_comm_round=report.daily_comm_round,
+                daily_interest=report.daily_interest,
+                daily_dividend=report.daily_dividend,
+                daily_profit=report.daily_profit,
+                daily_storage=report.daily_storage,
+                daily_agent=report.daily_agent,
+                daily_so_compensation=report.daily_so_compensation,
+                daily_so_compensation_credit=report.daily_so_compensation_credit,
+                daily_taxes=report.daily_taxes,
+                
+                # Interest rate
+                interest_rate=report.interest_rate,
+                
+                # Profit breakdown
+                present_equity=report.present_equity,
+                profit_storage=report.profit_storage,
+                profit_assets=report.profit_assets,
+                profit_liabilities=report.profit_liabilities,
             )
             for report in reports
         ]
@@ -312,6 +377,101 @@ async def get_daily_reports(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch daily reports: {str(e)}"
+        )
+
+
+@router.get("/daily-pnl", response_model=MT5DailyPnLResponse)
+async def get_daily_pnl(
+    login: int = Query(..., description="Account login"),
+    target_date: str = Query(..., description="Target date (YYYY-MM-DD, e.g., 2025-10-31)"),
+    current_user_id: int = Depends(get_current_user_id),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+) -> MT5DailyPnLResponse:
+    """
+    Calculate daily PNL for a specific account and date.
+    
+    **Formula:** equity_pnl = present_equity - equity_prev_day - net_deposit - net_credit_promotion - total_ib
+    
+    **Process:**
+    - For target date (e.g., 31.10), fetches daily reports from 30.10 to 31.10
+    - Uses 31.10 present_equity and equity_prev_day from the report
+    - Calculates net_deposit from deposits/withdrawals on 31.10
+    - Calculates net_credit_promotion from credits/bonuses on 31.10
+    - Gets total_ib from daily_agent field in the report
+    - Sums rebate from REB-tagged deals on 31.10
+    
+    **Example:**
+    - Calculate PNL for Oct 31: `GET /api/accounts/daily-pnl?login=350001&target_date=2025-10-31`
+    
+    **Returns:**
+    - login: Account login
+    - date: Target date (YYYY-MM-DD)
+    - present_equity: Current day equity
+    - equity_prev_day: Previous day equity
+    - net_deposit: Net deposits (deposits - withdrawals)
+    - net_credit_promotion: Net credit/promotions
+    - total_ib: Total IB commissions
+    - rebate: Total rebate from REB-tagged deals
+    - equity_pnl: Calculated PNL
+    - group: Account group
+    - currency: Account currency
+    """
+    try:
+        # Parse target date
+        try:
+            target_date_obj = date.fromisoformat(target_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format: {target_date}. Use YYYY-MM-DD format."
+            )
+        
+        logger.info("calculating_daily_pnl", login=login, target_date=target_date)
+        
+        # Create PNL service and calculate
+        pnl_service = DailyPnLService(mt5)
+        pnl_result = await pnl_service.calculate_daily_pnl(target_date_obj, login)
+        
+        if not pnl_result:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data available for login {login} on date {target_date}"
+            )
+        
+        # Map to response DTO
+        response = MT5DailyPnLResponse(
+            login=pnl_result.login,
+            date=pnl_result.date,
+            present_equity=pnl_result.present_equity,
+            equity_prev_day=pnl_result.equity_prev_day,
+            net_deposit=pnl_result.net_deposit,
+            promotion=pnl_result.promotion,
+            net_credit_promotion=pnl_result.net_credit_promotion,
+            total_ib=pnl_result.total_ib,
+            rebate=pnl_result.rebate,
+            equity_pnl=pnl_result.equity_pnl,
+            net_pnl=pnl_result.net_pnl,
+            group=pnl_result.group,
+            currency=pnl_result.currency,
+        )
+        
+        logger.info("daily_pnl_calculated", 
+                   login=login, 
+                   target_date=target_date,
+                   equity_pnl=pnl_result.equity_pnl)
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("daily_pnl_calculation_failed", 
+                    login=login, 
+                    target_date=target_date,
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to calculate daily PNL: {str(e)}"
         )
 
 

@@ -53,10 +53,52 @@ class Mt5DailyReport:
     balance_prev_month: float  # Previous month balance
     margin: float
     margin_free: float
+    margin_level: float
+    margin_leverage: int
     floating_profit: float
     group: str
     currency: str
+    currency_digits: int
     timestamp: int  # Unix timestamp of the report
+    datetime_prev: int  # Previous day timestamp
+    
+    # Account info
+    name: str
+    email: str
+    company: str
+    
+    # Agent commissions
+    agent_daily: float
+    agent_monthly: float
+    commission_daily: float
+    commission_monthly: float
+    
+    # Daily transactions breakdown
+    daily_balance: float  # Balance operations (deposits/withdrawals)
+    daily_credit: float  # Credit operations
+    daily_charge: float  # Charges
+    daily_correction: float  # Corrections
+    daily_bonus: float  # Bonuses
+    daily_comm_fee: float  # Commission fees
+    daily_comm_instant: float  # Instant commissions
+    daily_comm_round: float  # Round commissions
+    daily_interest: float  # Interest
+    daily_dividend: float  # Dividends
+    daily_profit: float  # Closed profit
+    daily_storage: float  # Storage/swap
+    daily_agent: float  # Agent operations
+    daily_so_compensation: float  # Stop-out compensation
+    daily_so_compensation_credit: float  # Stop-out compensation credit
+    daily_taxes: float  # Taxes
+    
+    # Interest rate
+    interest_rate: float
+    
+    # Profit breakdown
+    present_equity: float  # Current/present equity (floating profit)
+    profit_storage: float  # Storage profit
+    profit_assets: float  # Assets profit
+    profit_liabilities: float  # Liabilities profit
 
 @dataclass
 class Mt5RealtimeEquity:
@@ -86,6 +128,7 @@ class Mt5DealHistory:
     comment: str
     timestamp: int  # Unix timestamp
     datetime_str: str  # Human-readable datetime
+    tag: str = ""  # Tag for special deal types (e.g., 'Rebate' for REB comments)
 
 @dataclass
 class NetPositionSummary:
@@ -94,6 +137,24 @@ class NetPositionSummary:
     sell_volume: float
     net_volume: float
     positions_count: int
+    total_profit: float = 0.0
+
+@dataclass
+class Mt5DailyPnL:
+    """Daily PNL calculation for an account."""
+    login: int
+    date: str  # YYYY-MM-DD format
+    present_equity: float  # Current day equity (from daily report)
+    equity_prev_day: float  # Previous day equity (from daily report)
+    net_deposit: float  # Net deposits for the day (deposits - withdrawals)
+    promotion: float  # Promotion amount for the day (from daily_bonus)
+    net_credit_promotion: float  # Net credit/promotions for the day
+    total_ib: float  # Total IB commissions for the day (from daily_agent field)
+    rebate: float  # Total rebate for the day (from REB-tagged deals)
+    equity_pnl: float  # Calculated: present_equity - equity_prev_day - net_deposit - net_credit_promotion - total_ib
+    net_pnl: float  # Calculated: equity_pnl - promotion
+    group: str
+    currency: str
 
 class CircuitBreaker:
     def __init__(self, failure_threshold: int = 5, timeout: int = 60):
@@ -407,10 +468,20 @@ class MT5ManagerService:
                     
                     # Initialize symbol data if not exists
                     if symbol not in symbol_data:
-                        symbol_data[symbol] = {"buy_volume": 0.0, "sell_volume": 0.0, "count": 0}
+                        symbol_data[symbol] = {
+                            "buy_volume": 0.0, 
+                            "sell_volume": 0.0, 
+                            "count": 0,
+                            "total_profit": 0.0
+                        }
                     
                     # Get volume in lots (MT5 stores in 10000ths)
                     volume_lots = pos.Volume / 10000.0
+                    
+                    # Get profit (including swap and commission if available)
+                    profit = pos.Profit
+                    if hasattr(pos, 'Storage'):
+                        profit += pos.Storage  # Add swap
                     
                     # Aggregate by action (buy/sell)
                     if pos.Action == MT5Manager.MTPosition.EnPositionAction.POSITION_BUY:
@@ -419,12 +490,14 @@ class MT5ManagerService:
                         symbol_data[symbol]["sell_volume"] += volume_lots
                     
                     symbol_data[symbol]["count"] += 1
+                    symbol_data[symbol]["total_profit"] += profit
                     
                     logger.debug("position_processed", 
                                 login=pos.Login,
                                 symbol=symbol, 
                                 action="buy" if pos.Action == MT5Manager.MTPosition.EnPositionAction.POSITION_BUY else "sell",
-                                volume=volume_lots)
+                                volume=volume_lots,
+                                profit=profit)
                     
                 except Exception as e:
                     logger.error("position_parse_error", error=str(e))
@@ -437,12 +510,16 @@ class MT5ManagerService:
                     buy_volume=data["buy_volume"],
                     sell_volume=data["sell_volume"],
                     net_volume=data["buy_volume"] - data["sell_volume"],
-                    positions_count=data["count"]
+                    positions_count=data["count"],
+                    total_profit=data["total_profit"]
                 )
                 for sym, data in symbol_data.items()
             ]
             
-            logger.info("positions_aggregated", total_symbols=len(result), total_positions=sum(p.positions_count for p in result))
+            logger.info("positions_aggregated", 
+                       total_symbols=len(result), 
+                       total_positions=sum(p.positions_count for p in result),
+                       total_profit=sum(p.total_profit for p in result))
             
             return result
         return await self._execute_with_retry(_get_positions)
@@ -553,19 +630,24 @@ class MT5ManagerService:
             List of daily reports with equity and balance information
         """
         def _get_daily_reports():
-            # Convert dates to Unix timestamps (start of day)
+            # Convert dates to Unix timestamps
+            # MT5 server uses GMT+3 timezone, so we need to adjust for that
+            # When user sends 2025-10-31, they mean 2025-10-31 00:00:00 GMT+3
+            # We need to convert to UTC for the timestamp
+            
             if from_date:
-                from_timestamp = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+                # Start of day in GMT+3 (subtract 3 hours to get UTC)
+                from_timestamp = int(datetime.combine(from_date, datetime.min.time()).timestamp()) + (3 * 3600)
             else:
-                # Default to yesterday
+                # Default to yesterday GMT+3
                 yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                from_timestamp = int((yesterday - timedelta(days=1)).timestamp())
+                from_timestamp = int((yesterday - timedelta(days=1)).timestamp()) + (3 * 3600)
             
             if to_date:
-                # End of day
-                to_timestamp = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+                # End of day in GMT+3 (23:59:59 GMT+3 = subtract 3 hours to get UTC)
+                to_timestamp = int(datetime.combine(to_date, datetime.max.time()).timestamp()) + (3 * 3600)
             else:
-                # Default to today
+                # Default to now
                 to_timestamp = int(datetime.now().timestamp())
             
             logger.info("fetching_daily_reports", 
@@ -630,6 +712,13 @@ class MT5ManagerService:
             result = []
             for idx, report in enumerate(reports):
                 try:
+                    # Log all available attributes for debugging
+                    if idx == 0:  # Log only first report to avoid spam
+                        available_attrs = [attr for attr in dir(report) if not attr.startswith('_')]
+                        logger.info("mt5_daily_report_available_fields", 
+                                   fields=available_attrs,
+                                   sample_values={attr: getattr(report, attr, None) for attr in available_attrs[:20]})
+                    
                     # Extract date from timestamp - try multiple field names
                     date_value = None
                     date_field_used = None
@@ -646,7 +735,10 @@ class MT5ManagerService:
                                      has_datetime_lower=hasattr(report, 'Datetime'))
                         continue
                     
-                    report_date = datetime.fromtimestamp(date_value).strftime('%Y-%m-%d')
+                    # Convert to 1 day earlier (MT5 returns end-of-day timestamp, we want the reporting date)
+                    # If MT5 returns 28.10, we show 27.10
+                    report_datetime = datetime.fromtimestamp(date_value) - timedelta(days=1)
+                    report_date = report_datetime.strftime('%Y-%m-%d')
                     
                     # Get balance and equity fields from MT5 Daily Report
                     balance = report.Balance if hasattr(report, 'Balance') else 0.0
@@ -676,10 +768,52 @@ class MT5ManagerService:
                         balance_prev_month=balance_prev_month,
                         margin=report.Margin if hasattr(report, 'Margin') else 0.0,
                         margin_free=report.MarginFree if hasattr(report, 'MarginFree') else 0.0,
+                        margin_level=report.MarginLevel if hasattr(report, 'MarginLevel') else 0.0,
+                        margin_leverage=int(report.MarginLeverage) if hasattr(report, 'MarginLeverage') else 0,
                         floating_profit=floating_profit,
                         group=report.Group if hasattr(report, 'Group') else "",
                         currency=report.Currency if hasattr(report, 'Currency') else "USD",
-                        timestamp=date_value,  # Use the date_value we already extracted
+                        currency_digits=int(report.CurrencyDigits) if hasattr(report, 'CurrencyDigits') else 2,
+                        timestamp=date_value,
+                        datetime_prev=int(report.DatetimePrev) if hasattr(report, 'DatetimePrev') else 0,
+                        
+                        # Account info
+                        name=report.Name if hasattr(report, 'Name') else "",
+                        email=report.EMail if hasattr(report, 'EMail') else "",
+                        company=report.Company if hasattr(report, 'Company') else "",
+                        
+                        # Agent commissions
+                        agent_daily=report.AgentDaily if hasattr(report, 'AgentDaily') else 0.0,
+                        agent_monthly=report.AgentMonthly if hasattr(report, 'AgentMonthly') else 0.0,
+                        commission_daily=report.CommissionDaily if hasattr(report, 'CommissionDaily') else 0.0,
+                        commission_monthly=report.CommissionMonthly if hasattr(report, 'CommissionMonthly') else 0.0,
+                        
+                        # Daily transactions breakdown
+                        daily_balance=report.DailyBalance if hasattr(report, 'DailyBalance') else 0.0,
+                        daily_credit=report.DailyCredit if hasattr(report, 'DailyCredit') else 0.0,
+                        daily_charge=report.DailyCharge if hasattr(report, 'DailyCharge') else 0.0,
+                        daily_correction=report.DailyCorrection if hasattr(report, 'DailyCorrection') else 0.0,
+                        daily_bonus=report.DailyBonus if hasattr(report, 'DailyBonus') else 0.0,
+                        daily_comm_fee=report.DailyCommFee if hasattr(report, 'DailyCommFee') else 0.0,
+                        daily_comm_instant=report.DailyCommInstant if hasattr(report, 'DailyCommInstant') else 0.0,
+                        daily_comm_round=report.DailyCommRound if hasattr(report, 'DailyCommRound') else 0.0,
+                        daily_interest=report.DailyInterest if hasattr(report, 'DailyInterest') else 0.0,
+                        daily_dividend=report.DailyDividend if hasattr(report, 'DailyDividend') else 0.0,
+                        daily_profit=report.DailyProfit if hasattr(report, 'DailyProfit') else 0.0,
+                        daily_storage=report.DailyStorage if hasattr(report, 'DailyStorage') else 0.0,
+                        daily_agent=report.DailyAgent if hasattr(report, 'DailyAgent') else 0.0,
+                        daily_so_compensation=report.DailySOCompensation if hasattr(report, 'DailySOCompensation') else 0.0,
+                        daily_so_compensation_credit=report.DailySOCompensationCredit if hasattr(report, 'DailySOCompensationCredit') else 0.0,
+                        daily_taxes=report.DailyTaxes if hasattr(report, 'DailyTaxes') else 0.0,
+                        
+                        # Interest rate
+                        interest_rate=report.InterestRate if hasattr(report, 'InterestRate') else 0.0,
+                        
+                        # Profit breakdown
+                        present_equity=profit_equity,
+                        profit_storage=report.ProfitStorage if hasattr(report, 'ProfitStorage') else 0.0,
+                        profit_assets=report.ProfitAssets if hasattr(report, 'ProfitAssets') else 0.0,
+                        profit_liabilities=report.ProfitLiabilities if hasattr(report, 'ProfitLiabilities') else 0.0,
                     ))
                 except Exception as e:
                     logger.warning("failed_to_parse_daily_report", error=str(e), index=idx)
@@ -892,6 +1026,11 @@ class MT5ManagerService:
                     
                     datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else ""
                     
+                    # Check if comment starts with "REB" and tag as Rebate
+                    tag = ""
+                    if comment and comment.upper().startswith("REB"):
+                        tag = "Rebate"
+                    
                     result.append(Mt5DealHistory(
                         deal_id=deal_id,
                         login=deal_login,
@@ -901,6 +1040,7 @@ class MT5ManagerService:
                         comment=comment,
                         timestamp=timestamp,
                         datetime_str=datetime_str,
+                        tag=tag,
                     ))
                 except Exception as e:
                     logger.warning("failed_to_parse_deal", error=str(e))
@@ -910,6 +1050,100 @@ class MT5ManagerService:
             return result
         
         return await self._execute_with_retry(_get_deals)
+
+    async def get_trade_deals(
+        self,
+        login: int | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[dict]:
+        """
+        Get trade deals (market orders) with commission, swap, and profit.
+        
+        Args:
+            login: Specific account login (optional)
+            from_date: Start date for history
+            to_date: End date for history
+            
+        Returns:
+            List of trade deal dicts with commission, swap, profit
+        """
+        if not self.connected:
+            await self.connect()
+        
+        def _get_trade_deals():
+            logger.info("fetching_trade_deals", login=login, from_date=from_date, to_date=to_date)
+            
+            # Convert dates to timestamps
+            if from_date:
+                from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+            else:
+                from_ts = int((datetime.now() - timedelta(days=30)).timestamp())
+            
+            if to_date:
+                to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+            else:
+                to_ts = int(datetime.now().timestamp())
+            
+            # Get deals from MT5
+            deals = None
+            if login is not None:
+                deals = self.manager.DealRequest(login, from_ts, to_ts)
+            else:
+                deals = self.manager.DealRequestByGroup("*", from_ts, to_ts)
+            
+            if deals is False or not deals:
+                error = MT5Manager.LastError()
+                logger.error("trade_deal_request_failed", error=error)
+                return []
+            
+            logger.info("trade_deals_received", total=len(deals))
+            
+            # Filter for actual trades (buy/sell operations)
+            # Action codes: 0 = BUY, 1 = SELL
+            result = []
+            for deal in deals:
+                try:
+                    action_code = deal.Action if hasattr(deal, 'Action') else None
+                    
+                    # Only include market trades (BUY=0, SELL=1)
+                    if action_code not in [0, 1]:
+                        continue
+                    
+                    deal_id = deal.Deal if hasattr(deal, 'Deal') else 0
+                    deal_login = deal.Login if hasattr(deal, 'Login') else 0
+                    symbol = deal.Symbol if hasattr(deal, 'Symbol') else ""
+                    volume = deal.Volume / 10000.0 if hasattr(deal, 'Volume') else 0.0  # Convert from MT5 format
+                    profit = deal.Profit if hasattr(deal, 'Profit') else 0.0
+                    commission = deal.Commission if hasattr(deal, 'Commission') else 0.0
+                    swap = deal.Storage if hasattr(deal, 'Storage') else 0.0
+                    timestamp = deal.Time if hasattr(deal, 'Time') else 0
+                    price = deal.Price if hasattr(deal, 'Price') else 0.0
+                    
+                    action_name = 'BUY' if action_code == 0 else 'SELL'
+                    datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else ""
+                    
+                    result.append({
+                        "deal_id": deal_id,
+                        "login": deal_login,
+                        "symbol": symbol,
+                        "action": action_name,
+                        "volume": volume,
+                        "price": price,
+                        "profit": profit,
+                        "commission": commission,
+                        "swap": swap,
+                        "timestamp": timestamp,
+                        "datetime": datetime_str,
+                    })
+                except Exception as e:
+                    logger.warning("failed_to_parse_trade_deal", error=str(e))
+                    continue
+            
+            logger.info("trade_deals_filtered", total=len(result))
+            return result
+        
+        return await self._execute_with_retry(_get_trade_deals)
 
     async def health_check(self) -> dict[str, Any]:
         try:

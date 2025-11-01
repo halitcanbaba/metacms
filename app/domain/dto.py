@@ -219,7 +219,7 @@ class MT5GroupResponse(BaseModel):
 
 
 class MT5DailyReportResponse(BaseModel):
-    """MT5 daily report response DTO - Historical EOD snapshots."""
+    """MT5 daily report response DTO - Historical EOD snapshots with complete data."""
 
     login: int
     date: str  # YYYY-MM-DD format
@@ -231,7 +231,68 @@ class MT5DailyReportResponse(BaseModel):
     balance_prev_month: float  # Previous month balance
     margin: float
     margin_free: float
+    margin_level: float
+    margin_leverage: int
     floating_profit: float
+    group: str
+    currency: str
+    currency_digits: int
+    timestamp: int  # Unix timestamp of the report
+    datetime_prev: int  # Previous day timestamp
+    
+    # Account info
+    name: str
+    email: str
+    company: str
+    
+    # Agent commissions
+    agent_daily: float
+    agent_monthly: float
+    commission_daily: float
+    commission_monthly: float
+    
+    # Daily transactions breakdown
+    daily_balance: float  # Balance operations (deposits/withdrawals)
+    daily_credit: float  # Credit operations
+    daily_charge: float  # Charges
+    daily_correction: float  # Corrections
+    daily_bonus: float  # Bonuses
+    daily_comm_fee: float  # Commission fees
+    daily_comm_instant: float  # Instant commissions
+    daily_comm_round: float  # Round commissions
+    daily_interest: float  # Interest
+    daily_dividend: float  # Dividends
+    daily_profit: float  # Closed profit
+    daily_storage: float  # Storage/swap
+    daily_agent: float  # Agent operations
+    daily_so_compensation: float  # Stop-out compensation
+    daily_so_compensation_credit: float  # Stop-out compensation credit
+    daily_taxes: float  # Taxes
+    
+    # Interest rate
+    interest_rate: float
+    
+    # Profit breakdown
+    present_equity: float  # Current/present equity (floating profit)
+    profit_storage: float  # Storage profit
+    profit_assets: float  # Assets profit
+    profit_liabilities: float  # Liabilities profit
+
+
+class MT5DailyPnLResponse(BaseModel):
+    """MT5 daily PNL calculation response DTO."""
+    
+    login: int
+    date: str  # YYYY-MM-DD format
+    present_equity: float  # Current day equity
+    equity_prev_day: float  # Previous day equity
+    net_deposit: float  # Net deposits for the day
+    promotion: float  # Promotion amount for the day
+    net_credit_promotion: float  # Net credit/promotions for the day
+    total_ib: float  # Total IB commissions for the day
+    rebate: float  # Total rebate for the day (from REB comments)
+    equity_pnl: float  # Calculated: present_equity - equity_prev_day - net_deposit - net_credit_promotion - total_ib
+    net_pnl: float  # Calculated: equity_pnl - promotion
     group: str
     currency: str
 
