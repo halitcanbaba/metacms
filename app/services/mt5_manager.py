@@ -30,9 +30,11 @@ class Mt5AccountInfo:
     currency: str
     balance: float
     credit: float
+    equity: float
     margin_free: float
     margin_level: float
     status: str
+    name: str = ""  # Account name from MT5
 
 @dataclass
 class Mt5BalanceResult:
@@ -599,16 +601,35 @@ class MT5ManagerService:
                 # If UserAccountGet fails, use defaults
                 pass
             
+            # Calculate equity: balance + credit + floating P&L
+            # Get positions to calculate floating P&L
+            floating_pnl = 0.0
+            try:
+                positions = self.manager.PositionRequestByLogin(login)
+                if positions and positions is not False:
+                    for pos in positions:
+                        if hasattr(pos, 'Profit'):
+                            floating_pnl += pos.Profit
+            except:
+                pass
+            
+            balance = user.Balance if hasattr(user, 'Balance') else 0.0
+            credit = user.Credit if hasattr(user, 'Credit') else 0.0
+            equity = balance + credit + floating_pnl
+            name = user.Name if hasattr(user, 'Name') else ""
+            
             return Mt5AccountInfo(
                 login=user.Login, 
                 group=user.Group, 
                 leverage=user.Leverage, 
                 currency="USD",
-                balance=user.Balance, 
-                credit=user.Credit, 
+                balance=balance, 
+                credit=credit,
+                equity=equity,
                 margin_free=margin_free,
                 margin_level=margin_level, 
-                status="active"
+                status="active",
+                name=name
             )
         return await self._execute_with_retry(_get_info)
 

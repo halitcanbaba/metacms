@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.deps import get_current_user_id
 from app.services.daily_pnl import DailyPnLService
+from app.services.mt5_manager import MT5ManagerService
 from app.repositories.daily_pnl_repo import DailyPnLRepository
 import structlog
 
@@ -344,12 +345,15 @@ async def get_monthly_top_winners(
     Get monthly top winners ranked by net PNL.
     
     Returns all accounts sorted by total net_pnl for the specified month.
-    Includes customer name for each account.
+    Includes account name from MT5, current equity, and monthly deposit/withdrawal totals.
     
     **Response:**
     - rank: Position in ranking (1-based)
     - login: MT5 account login
-    - customer_name: Name of the customer
+    - account_name: Name from MT5 account
+    - current_equity: Current equity from MT5
+    - total_deposit: Sum of deposits for the month
+    - total_withdrawal: Sum of withdrawals for the month
     - total_net_pnl: Sum of net_pnl for the month
     """
     from app.domain.models import MT5Account
@@ -365,26 +369,35 @@ async def get_monthly_top_winners(
     
     logger.info("get_monthly_top_winners", year=target_year, month=target_month)
     
-    # Get aggregated data from repository
+    # Get aggregated data from repository (now includes deposits/withdrawals)
     repo = DailyPnLRepository(db)
-    monthly_data = await repo.get_monthly_aggregated(target_year, target_month)
+    monthly_data = await repo.get_monthly_aggregated_detailed(target_year, target_month)
     
-    # Fetch customer names for each login
+    # Get current equity from MT5 for each account
+    mt5_service = MT5ManagerService()
+    
+    # Fetch account details and current equity
     results = []
     rank = 1
-    for login, total_net_pnl in monthly_data:
-        # Get account to fetch customer name
-        from sqlalchemy import select
-        stmt = select(MT5Account).where(MT5Account.login == login)
-        result = await db.execute(stmt)
-        account = result.scalar_one_or_none()
-        
-        customer_name = account.customer.name if account and account.customer else "Unknown"
+    for login, total_net_pnl, total_deposit, total_withdrawal in monthly_data:
+        # Get current account info from MT5 (includes name and equity)
+        account_name = "Unknown"
+        current_equity = 0.0
+        try:
+            account_info = await mt5_service.get_account_info(login)
+            if account_info:
+                account_name = account_info.name if account_info.name else "Unknown"
+                current_equity = account_info.equity
+        except Exception as e:
+            logger.warning("failed_to_get_account_info", login=login, error=str(e))
         
         results.append({
             "rank": rank,
             "login": login,
-            "customer_name": customer_name,
+            "account_name": account_name,
+            "current_equity": round(current_equity, 2),
+            "total_deposit": round(total_deposit, 2),
+            "total_withdrawal": round(total_withdrawal, 2),
             "total_net_pnl": round(total_net_pnl, 2),
         })
         rank += 1

@@ -176,3 +176,48 @@ class DailyPnLRepository:
         
         result = await self.db.execute(stmt)
         return [(row.login, float(row.total_net_pnl)) for row in result]
+    
+    async def get_monthly_aggregated_detailed(
+        self,
+        year: int,
+        month: int
+    ) -> list[tuple[int, float, float, float]]:
+        """
+        Get detailed aggregated data by login for a specific month.
+        Returns list of (login, total_net_pnl, total_deposit, total_withdrawal) tuples 
+        sorted by net_pnl descending.
+        Excludes login=0 (institution aggregate).
+        """
+        from sqlalchemy import func
+        
+        # Get first and last day of month
+        from calendar import monthrange
+        _, last_day = monthrange(year, month)
+        from_date = datetime(year, month, 1)
+        to_date = datetime(year, month, last_day, 23, 59, 59)
+        
+        # Query to sum metrics grouped by login for the month
+        stmt = (
+            select(
+                DailyPnL.login,
+                func.sum(DailyPnL.net_pnl).label('total_net_pnl'),
+                func.sum(DailyPnL.deposit).label('total_deposit'),
+                func.sum(DailyPnL.withdrawal).label('total_withdrawal')
+            )
+            .where(
+                and_(
+                    DailyPnL.day >= from_date,
+                    DailyPnL.day <= to_date,
+                    DailyPnL.login != 0,  # Exclude institution aggregate
+                    DailyPnL.login.isnot(None)  # Exclude null logins
+                )
+            )
+            .group_by(DailyPnL.login)
+            .order_by(func.sum(DailyPnL.net_pnl).desc())
+        )
+        
+        result = await self.db.execute(stmt)
+        return [
+            (row.login, float(row.total_net_pnl), float(row.total_deposit), float(row.total_withdrawal)) 
+            for row in result
+        ]
