@@ -19,10 +19,12 @@ import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
 import Agents from './pages/Agents';
 import Accounts from './pages/Accounts';
+import AccountDetail from './pages/AccountDetail';
 import Balance from './pages/Balance';
 import Positions from './pages/Positions';
 import Audit from './pages/Audit';
 import DailyPnL from './pages/DailyPnL';
+import Users from './pages/Users';
 
 function App() {
   return (
@@ -46,10 +48,12 @@ function App() {
           <Route path="customers" element={<Customers />} />
           <Route path="agents" element={<Agents />} />
           <Route path="accounts" element={<Accounts />} />
+          <Route path="account/:login" element={<AccountDetail />} />
           <Route path="balance" element={<Balance />} />
           <Route path="positions" element={<Positions />} />
           <Route path="daily-pnl" element={<DailyPnL />} />
           <Route path="audit" element={<Audit />} />
+          <Route path="users" element={<Users />} />
         </Route>
 
         {/* 404 */}

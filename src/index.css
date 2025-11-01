@@ -11,3 +11,91 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Fix for CoreUI sidebar icons in narrow mode */
+.sidebar-narrow .nav-icon {
+  display: inline-block !important;
+  margin-right: 0 !important;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.sidebar-narrow .nav-link {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  padding: 0.75rem 0 !important;
+}
+
+/* Narrow modda text'i gizle */
+.sidebar-narrow .nav-text {
+  display: none !important;
+}
+
+/* Expanded modda icon için margin */
+.sidebar:not(.sidebar-narrow) .nav-icon {
+  margin-right: 0.5rem !important;
+}
+
+/* Sidebar responsive layout */
+.wrapper {
+  transition: margin-left 0.15s;
+  margin-left: 0;
+}
+
+/* Desktop - sidebar always visible, push content */
+@media (min-width: 992px) {
+  /* Narrow sidebar (default) */
+  .wrapper.sidebar-narrow-wrapper {
+    margin-left: 56px !important;
+  }
+  
+  /* Expanded sidebar */
+  .wrapper.sidebar-expanded-wrapper {
+    margin-left: 256px !important;
+  }
+  
+  .sidebar {
+    position: fixed !important;
+    z-index: 1040;
+  }
+}
+
+/* Mobile responsive - sidebar always narrow and visible */
+@media (max-width: 991.98px) {
+  /* Mobile'da sidebar her zaman narrow olarak göster */
+  .wrapper {
+    margin-left: 56px !important;
+  }
+  
+  .sidebar {
+    position: fixed !important;
+    z-index: 1040 !important;
+    width: 56px !important;
+  }
+
+  /* Mobile'da sidebar her zaman göster */
+  .sidebar {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  /* Ensure narrow sidebar shows icons properly on mobile */
+  .sidebar.sidebar-narrow .nav-icon,
+  .sidebar .nav-icon {
+    display: inline-block !important;
+    margin-right: 0 !important;
+  }
+
+  .sidebar.sidebar-narrow .nav-link,
+  .sidebar .nav-link {
+    text-align: center !important;
+    padding: 0.75rem 0 !important;
+  }
+  
+  /* Hide text in narrow mode on mobile */
+  .sidebar.sidebar-narrow .nav-link > span,
+  .sidebar .nav-link > span:not(.nav-icon) {
+    display: none !important;
+  }
+}

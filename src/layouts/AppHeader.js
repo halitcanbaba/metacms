@@ -1,14 +1,13 @@
 /**
  * Application Header
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CContainer,
   CHeader,
   CHeaderBrand,
   CHeaderNav,
-  CHeaderToggler,
   CNavLink,
   CNavItem,
   CDropdown,
@@ -16,30 +15,51 @@ import {
   CDropdownMenu,
   CDropdownItem,
   CDropdownDivider,
+  CFormInput,
+  CInputGroup,
+  CInputGroupText,
+  CButton,
 } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilMenu, cilAccountLogout, cilUser } from '@coreui/icons';
+import { cilAccountLogout, cilUser, cilPeople, cilSearch } from '@coreui/icons';
 import { authService } from '../services/auth';
 
-const AppHeader = ({ onToggleSidebar }) => {
+const AppHeader = () => {
   const navigate = useNavigate();
   const user = authService.getCurrentUser();
+  const [searchLogin, setSearchLogin] = useState('');
 
   const handleLogout = () => {
     authService.logout();
     navigate('/login');
   };
 
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (searchLogin.trim()) {
+      navigate(`/account/${searchLogin.trim()}`);
+      setSearchLogin('');
+    }
+  };
+
   return (
     <CHeader position="sticky" className="mb-4">
       <CContainer fluid>
-        <CHeaderToggler className="ps-1" onClick={onToggleSidebar}>
-          <CIcon icon={cilMenu} size="lg" />
-        </CHeaderToggler>
-
-        <CHeaderBrand className="mx-auto d-md-none">
-          CRM
-        </CHeaderBrand>
+        <CHeaderNav>
+          <form onSubmit={handleSearch}>
+            <CInputGroup size="sm" style={{ maxWidth: '200px' }}>
+              <CInputGroupText>
+                <CIcon icon={cilSearch} size="sm" />
+              </CInputGroupText>
+              <CFormInput
+                type="text"
+                placeholder="Search..."
+                value={searchLogin}
+                onChange={(e) => setSearchLogin(e.target.value)}
+              />
+            </CInputGroup>
+          </form>
+        </CHeaderNav>
 
         <CHeaderNav className="ms-auto">
           <CDropdown variant="nav-item">
@@ -51,6 +71,10 @@ const AppHeader = ({ onToggleSidebar }) => {
               <CDropdownItem>
                 <CIcon icon={cilUser} className="me-2" />
                 Profile
+              </CDropdownItem>
+              <CDropdownItem onClick={() => navigate('/users')}>
+                <CIcon icon={cilPeople} className="me-2" />
+                Manage Users
               </CDropdownItem>
               <CDropdownDivider />
               <CDropdownItem onClick={handleLogout}>

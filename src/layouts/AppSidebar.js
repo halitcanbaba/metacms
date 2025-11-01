@@ -7,9 +7,10 @@ import {
   CSidebar,
   CSidebarBrand,
   CSidebarNav,
-  CNavTitle,
   CNavItem,
   CSidebarToggler,
+  CButton,
+  CTooltip,
 } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import {
@@ -21,9 +22,10 @@ import {
   cilChart,
   cilMoney,
   cilHistory,
+  cilMenu,
 } from '@coreui/icons';
 
-const AppSidebar = ({ visible, onVisibleChange, narrow, onNarrowChange }) => {
+const AppSidebar = ({ visible, onVisibleChange, narrow, onNarrowChange, isMobile }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -70,40 +72,64 @@ const AppSidebar = ({ visible, onVisibleChange, narrow, onNarrowChange }) => {
     },
   ];
 
+  const handleToggleNarrow = () => {
+    if (onNarrowChange) {
+      onNarrowChange(!narrow);
+    }
+  };
+
   return (
     <CSidebar 
       position="fixed"
       visible={visible}
       onVisibleChange={onVisibleChange}
       narrow={narrow}
-      onNarrowChange={onNarrowChange}
+      className={narrow ? 'sidebar-narrow' : ''}
     >
-      <CSidebarBrand className="d-none d-md-flex">
-        <h4 className="text-white mb-0">CRM MT5</h4>
-      </CSidebarBrand>
-
-      <CSidebarNav>
-        <CNavTitle>Navigation</CNavTitle>
-        {navItems.map((item) => (
-          <CNavItem
-            key={item.to}
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(item.to);
-            }}
-            active={location.pathname === item.to}
+      {/* Toggle button sadece desktop'ta göster */}
+      {!isMobile && onNarrowChange && (
+        <div className="sidebar-header d-flex align-items-center justify-content-end p-3">
+          <CButton
+            color="link"
+            className="text-white p-0"
+            onClick={handleToggleNarrow}
+            style={{ fontSize: '1.5rem' }}
           >
-            <CIcon customClassName="nav-icon" icon={item.icon} />
-            {item.title}
-          </CNavItem>
-        ))}
-      </CSidebarNav>
+            <CIcon icon={cilMenu} size="lg" />
+          </CButton>
+        </div>
+      )}
+      
+      <CSidebarNav>
+        {navItems.map((item) => {
+          const navItem = (
+            <CNavItem
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate(item.to);
+              }}
+              active={location.pathname === item.to}
+            >
+              <CIcon customClassName="nav-icon" icon={item.icon} />
+              {!narrow && <span className="nav-text">{item.title}</span>}
+            </CNavItem>
+          );
 
-      <CSidebarToggler 
-        className="d-none d-lg-flex" 
-        onClick={() => onNarrowChange(!narrow)}
-      />
+          // Only show tooltip when sidebar is narrow
+          return narrow ? (
+            <CTooltip
+              key={item.to}
+              content={item.title}
+              placement="right"
+            >
+              {navItem}
+            </CTooltip>
+          ) : (
+            <div key={item.to}>{navItem}</div>
+          );
+        })}
+      </CSidebarNav>
     </CSidebar>
   );
 };
