@@ -9,18 +9,18 @@ import AppHeader from './AppHeader';
 
 const DefaultLayout = () => {
   const [sidebarShow, setSidebarShow] = useState(true);
-  const [sidebarUnfoldable, setSidebarUnfoldable] = useState(false);
+  const [sidebarNarrow, setSidebarNarrow] = useState(false);
 
   return (
     <div>
       <AppSidebar 
         visible={sidebarShow}
         onVisibleChange={setSidebarShow}
-        unfoldable={sidebarUnfoldable}
-        onUnfoldableChange={setSidebarUnfoldable}
+        narrow={sidebarNarrow}
+        onNarrowChange={setSidebarNarrow}
       />
       <div className="wrapper d-flex flex-column min-vh-100 bg-light">
-        <AppHeader onToggleSidebar={() => setSidebarShow(!sidebarShow)} />
+        <AppHeader onToggleSidebar={() => setSidebarNarrow(!sidebarNarrow)} />
         <div className="body flex-grow-1 px-3">
           <CContainer fluid>
             <Outlet />

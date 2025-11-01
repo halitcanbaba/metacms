@@ -23,7 +23,7 @@ import {
   cilHistory,
 } from '@coreui/icons';
 
-const AppSidebar = ({ visible, onVisibleChange, unfoldable, onUnfoldableChange }) => {
+const AppSidebar = ({ visible, onVisibleChange, narrow, onNarrowChange }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -75,7 +75,8 @@ const AppSidebar = ({ visible, onVisibleChange, unfoldable, onUnfoldableChange }
       position="fixed"
       visible={visible}
       onVisibleChange={onVisibleChange}
-      unfoldable={unfoldable}
+      narrow={narrow}
+      onNarrowChange={onNarrowChange}
     >
       <CSidebarBrand className="d-none d-md-flex">
         <h4 className="text-white mb-0">CRM MT5</h4>
@@ -101,7 +102,7 @@ const AppSidebar = ({ visible, onVisibleChange, unfoldable, onUnfoldableChange }
 
       <CSidebarToggler 
         className="d-none d-lg-flex" 
-        onClick={() => onUnfoldableChange(!unfoldable)}
+        onClick={() => onNarrowChange(!narrow)}
       />
     </CSidebar>
   );
