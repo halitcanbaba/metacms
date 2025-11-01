@@ -2,7 +2,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date, timedelta
 from typing import Any
 import structlog
 import MT5Manager
@@ -739,10 +739,9 @@ class MT5ManagerService:
                     
                     # Convert to 1 day earlier (MT5 returns end-of-day timestamp, we want the reporting date)
                     # If MT5 returns 28.10, we show 27.10
-                    # MT5 timestamps are in UTC, convert to GMT+3
-                    utc_dt = datetime.utcfromtimestamp(date_value)
-                    gmt3_dt = utc_dt + timedelta(hours=3)
-                    report_datetime = gmt3_dt - timedelta(days=1)
+                    # MT5 Manager API returns UTC timestamps, parse as UTC
+                    utc_time = datetime.utcfromtimestamp(date_value)
+                    report_datetime = utc_time - timedelta(days=1)
                     report_date = report_datetime.strftime('%Y-%m-%d')
                     
                     # Get balance and equity fields from MT5 Daily Report
@@ -957,15 +956,20 @@ class MT5ManagerService:
         def _get_deals():
             logger.info("fetching_deal_history", login=login, from_date=from_date, to_date=to_date)
             
-            # Convert dates to timestamps
+            # Convert dates to UTC timestamps (API dates are treated as UTC dates)
+            # MT5 Manager API expects UTC timestamps
             if from_date:
-                from_ts = int(datetime.combine(from_date, datetime.min.time()).timestamp())
+                # Create datetime in UTC (treat date as UTC, not local)
+                utc_dt = datetime.combine(from_date, datetime.min.time())
+                # Calculate timestamp as if this datetime was UTC
+                from_ts = int((utc_dt - datetime(1970, 1, 1)).total_seconds())
             else:
                 # Default to 30 days ago
                 from_ts = int((datetime.now() - timedelta(days=30)).timestamp())
             
             if to_date:
-                to_ts = int(datetime.combine(to_date, datetime.max.time()).timestamp())
+                utc_dt = datetime.combine(to_date, datetime.max.time())
+                to_ts = int((utc_dt - datetime(1970, 1, 1)).total_seconds())
             else:
                 to_ts = int(datetime.now().timestamp())
             
@@ -1020,11 +1024,12 @@ class MT5ManagerService:
                     if hasattr(deal, 'Storage'):
                         balance_after = deal.Storage
                     
-                    # MT5 timestamps are in UTC, convert to GMT+3 for display
+                    # MT5 Manager API returns UTC timestamps but we want to display them as-is
+                    # (user sees these times in MT5 and wants to see the same in API)
                     if timestamp:
-                        utc_dt = datetime.utcfromtimestamp(timestamp)
-                        gmt3_dt = utc_dt + timedelta(hours=3)
-                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
+                        # Use utcfromtimestamp to parse as UTC, display without timezone label
+                        utc_time = datetime.utcfromtimestamp(timestamp)
+                        datetime_str = utc_time.strftime('%Y-%m-%d %H:%M:%S')
                     else:
                         datetime_str = ""
                     
@@ -1150,11 +1155,12 @@ class MT5ManagerService:
                     
                     action_name = 'BUY' if action_code == 0 else 'SELL'
                     
-                    # MT5 timestamps are in UTC, convert to GMT+3 for display
+                    # MT5 Manager API returns UTC timestamps but we want to display them as-is
+                    # (user sees these times in MT5 and wants to see the same in API)
                     if timestamp:
-                        utc_dt = datetime.utcfromtimestamp(timestamp)
-                        gmt3_dt = utc_dt + timedelta(hours=3)
-                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
+                        # Use utcfromtimestamp to parse as UTC, display without timezone label
+                        utc_time = datetime.utcfromtimestamp(timestamp)
+                        datetime_str = utc_time.strftime('%Y-%m-%d %H:%M:%S')
                     else:
                         datetime_str = ""
                     
