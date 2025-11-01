@@ -90,18 +90,18 @@ const Accounts = () => {
     try {
       setLoading(true);
       setError('');
-      const [accountsData, customersData, agentsData, groupsData, realtimeResponse] = await Promise.all([
-        accountsService.getAll({ limit: 100 }),
+      const [customersData, agentsData, groupsData, realtimeResponse] = await Promise.all([
         customersService.getAll({ limit: 100 }),
         getAgents({ limit: 100, active_only: true }),
         accountsService.getGroups(),
         api.get('/api/accounts/realtime'),
       ]);
-      setAccounts(accountsData.items || []);
       setCustomers(customersData.items || []);
       setAgents(agentsData.items || []);
       setGroups(groupsData || []);
       setRealtimeData(realtimeResponse.data || []);
+      // Set accounts to empty since we're using realtime data directly
+      setAccounts([]);
     } catch (err) {
       setError('Failed to load data: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -381,7 +381,8 @@ const Accounts = () => {
             <CCardHeader>
               <CRow className="align-items-center">
                 <CCol>
-                  <strong>Account List</strong>
+                  <strong>MT5 Accounts</strong>
+                  {!loading && <span className="text-muted ms-2">({realtimeData.length} accounts)</span>}
                 </CCol>
                 <CCol xs="auto">
                   <CButton color="secondary" className="me-2" onClick={loadData}>
@@ -401,9 +402,9 @@ const Accounts = () => {
                 <div className="text-center py-5">
                   <CSpinner color="primary" />
                 </div>
-              ) : accounts.length === 0 ? (
+              ) : realtimeData.length === 0 ? (
                 <div className="text-center py-5 text-muted">
-                  <p>No accounts found.</p>
+                  <p>No accounts found in MT5 server.</p>
                   <CButton color="primary" onClick={handleOpenModal}>
                     Create your first account
                   </CButton>
@@ -427,9 +428,7 @@ const Accounts = () => {
                     </CTableRow>
                   </CTableHead>
                   <CTableBody>
-                    {accounts.map((account) => {
-                      const equity = getEquityForAccount(account.login);
-                      const name = getNameForAccount(account.login);
+                    {realtimeData.map((account) => {
                       return (
                         <CTableRow 
                           key={account.login}
@@ -439,25 +438,25 @@ const Accounts = () => {
                           <CTableDataCell>
                             <strong>{account.login}</strong>
                           </CTableDataCell>
-                          <CTableDataCell>{name}</CTableDataCell>
-                          <CTableDataCell>{account.customer?.name || '-'}</CTableDataCell>
-                          <CTableDataCell>{account.customer?.agent?.name || '-'}</CTableDataCell>
+                          <CTableDataCell>{account.name || '-'}</CTableDataCell>
+                          <CTableDataCell>-</CTableDataCell>
+                          <CTableDataCell>-</CTableDataCell>
                           <CTableDataCell>{account.group}</CTableDataCell>
                           <CTableDataCell>
                             {formatNumber(account.balance)}
                           </CTableDataCell>
                           <CTableDataCell>
-                            {formatNumber(equity)}
+                            {formatNumber(account.equity)}
                           </CTableDataCell>
                           <CTableDataCell>1:{account.leverage}</CTableDataCell>
                           <CTableDataCell>{account.currency}</CTableDataCell>
                           <CTableDataCell>
-                            <CBadge color={getStatusColor(account.status)}>
-                              {account.status || 'Unknown'}
+                            <CBadge color={account.margin_level > 0 ? 'success' : 'secondary'}>
+                              {account.margin_level > 0 ? 'Active' : 'Inactive'}
                             </CBadge>
                           </CTableDataCell>
                           <CTableDataCell>
-                            {new Date(account.created_at).toLocaleDateString()}
+                            -
                           </CTableDataCell>
                           <CTableDataCell onClick={(e) => e.stopPropagation()}>
                             <CDropdown>

@@ -269,7 +269,7 @@ const DailyPnL = () => {
                               <CTableRow key={index}>
                                 <CTableDataCell className="text-center">{record.day}</CTableDataCell>
                                 <CTableDataCell className="text-center">{formatCurrency(record.deposit)}</CTableDataCell>
-                                <CTableDataCell className="text-center">{formatCurrency(record.withdrawal)}</CTableDataCell>
+                                <CTableDataCell className="text-center">{formatCurrency(record.withdrawal !== 0 ? -Math.abs(record.withdrawal) : 0)}</CTableDataCell>
                                 <CTableDataCell className="text-center" style={{ fontWeight: '500' }}>
                                   {formatCurrency(record.net_deposit)}
                                 </CTableDataCell>
@@ -292,6 +292,51 @@ const DailyPnL = () => {
                                 </CTableDataCell>
                               </CTableRow>
                             ))}
+                            {/* Total Row */}
+                            {latestRecords.length > 0 && (
+                              <CTableRow style={{ backgroundColor: '#f0f0f0', fontWeight: 'bold' }}>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>TOTAL</CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.deposit || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {(() => {
+                                    const totalWD = latestRecords.reduce((sum, r) => sum + (r.withdrawal || 0), 0);
+                                    return formatCurrency(totalWD !== 0 ? -Math.abs(totalWD) : 0);
+                                  })()}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.net_deposit || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.promotion || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.credit || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.net_credit_promotion || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.total_ib || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.commission || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.swap || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.closed_pnl || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.equity_pnl || 0), 0))}
+                                </CTableDataCell>
+                                <CTableDataCell className="text-center" style={{ fontWeight: 'bold' }}>
+                                  {formatCurrency(latestRecords.reduce((sum, r) => sum + (r.net_pnl || 0), 0))}
+                                </CTableDataCell>
+                              </CTableRow>
+                            )}
                           </CTableBody>
                         </CTable>
                       </div>
