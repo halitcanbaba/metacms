@@ -99,6 +99,7 @@ class MT5Account(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     customer_id: Mapped[int] = mapped_column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     login: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     group: Mapped[str] = mapped_column(String(100), nullable=False)
     leverage: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="USD", nullable=False)

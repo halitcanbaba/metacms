@@ -328,7 +328,7 @@ class MT5ManagerService:
             
             logger.info("account_created_with_login", login=user.Login, group=group, leverage=leverage, rights=user.Rights)
             
-            # MTUser doesn't have MarginFree/MarginLevel - use defaults for new account
+            # MTUser doesn't have MarginFree/MarginLevel/Equity - use defaults for new account
             # These values are only available via UserAccountGet after trading starts
             return Mt5AccountInfo(
                 login=user.Login, 
@@ -336,10 +336,12 @@ class MT5ManagerService:
                 leverage=user.Leverage, 
                 currency=currency,
                 balance=user.Balance, 
-                credit=user.Credit, 
+                credit=user.Credit,
+                equity=user.Balance + user.Credit,  # For new account, equity = balance + credit
                 margin_free=0.0,  # New account has no margin usage
                 margin_level=0.0,  # New account has no margin level
-                status="active"
+                status="active",
+                name=full_name
             )
         return await self._execute_with_retry(_create)
 

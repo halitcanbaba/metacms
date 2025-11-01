@@ -3,7 +3,7 @@ MT5 account management router.
 
 Provides endpoints for creating and managing MetaTrader 5 accounts.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -663,26 +663,48 @@ async def get_account(
     """Get MT5 account details by login."""
     repo = AccountsRepository(db)
     account = await repo.get_by_login(login)
-    
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
-    
-    # Get live balance and name from MT5
-    account_name = None
+
+    # If account exists in DB, return it with live balance from MT5 if possible
+    if account:
+        account_name = None
+        try:
+            mt5_info = await mt5.get_account_info(login)
+            account.balance = mt5_info.balance
+            account.credit = mt5_info.credit
+            account_name = getattr(mt5_info, 'name', None)
+        except Exception as e:
+            logger.warning("could_not_fetch_mt5_balance", login=login, error=str(e))
+
+        # Convert to response and add name
+        response = MT5AccountResponse.model_validate(account)
+        if account_name:
+            response.name = account_name
+
+        return response
+
+    # If not found in DB, try to fetch from MT5 directly and return a lightweight response
     try:
         mt5_info = await mt5.get_account_info(login)
-        account.balance = mt5_info.balance
-        account.credit = mt5_info.credit
-        account_name = mt5_info.name
-    except Exception as e:
-        logger.warning("could_not_fetch_mt5_balance", login=login, error=str(e))
-    
-    # Convert to response and add name
-    response = MT5AccountResponse.model_validate(account)
-    if account_name:
-        response.name = account_name
-    
-    return response
+        # Build a response (not persisted) so frontend can show account details even if not in DB
+        response = MT5AccountResponse(
+            id=0,
+            customer_id=0,
+            login=login,
+            group=getattr(mt5_info, 'group', 'UNKNOWN'),
+            leverage=getattr(mt5_info, 'leverage', 100),
+            currency=getattr(mt5_info, 'currency', 'USD'),
+            status=MT5AccountStatus.ACTIVE,
+            balance=getattr(mt5_info, 'balance', 0.0),
+            credit=getattr(mt5_info, 'credit', 0.0),
+            name=getattr(mt5_info, 'name', None),
+            customer=None,
+            external_ids={},
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        return response
+    except Exception:
+        raise HTTPException(status_code=404, detail="Account not found")
 
 
 @router.post("/{login}/reset-password", status_code=status.HTTP_204_NO_CONTENT)
@@ -746,6 +768,95 @@ async def move_group(
     )
     
     logger.info("group_changed", login=login, old_group=old_group, new_group=group_data.new_group)
+
+
+@router.post("/sync-from-mt5")
+async def sync_accounts_from_mt5(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_role(UserRole.ADMIN)),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+):
+    """
+    Sync all accounts from MT5 server to database.
+    This will add new accounts and update existing ones.
+    """
+    from sqlalchemy import select
+    
+    # Get all users from MT5
+    def get_all_mt5_users():
+        users = mt5.manager.UserGetByGroup("*")
+        if users is False or users is None:
+            logger.error("Failed to get users from MT5")
+            return []
+        return users
+    
+    import asyncio
+    users = await asyncio.get_event_loop().run_in_executor(None, get_all_mt5_users)
+    
+    logger.info(f"sync_mt5_accounts_started", total_users=len(users))
+    
+    added = 0
+    updated = 0
+    skipped = 0
+    
+    for user in users:
+        try:
+            login = user.Login
+            
+            # Check if account exists
+            result = await db.execute(select(MT5Account).filter(MT5Account.login == login))
+            existing = result.scalar_one_or_none()
+            
+            # Determine status
+            status = MT5AccountStatus.ACTIVE
+            if hasattr(user, 'Rights'):
+                if not (user.Rights & 1):  # USER_RIGHT_ENABLED = 1
+                    status = MT5AccountStatus.DISABLED
+            
+            # Get name from FirstName
+            name = user.FirstName if hasattr(user, 'FirstName') else ""
+            
+            if existing:
+                # Update existing
+                existing.group = user.Group if hasattr(user, 'Group') else existing.group
+                existing.leverage = user.Leverage if hasattr(user, 'Leverage') else existing.leverage
+                existing.balance = user.Balance if hasattr(user, 'Balance') else existing.balance
+                existing.credit = user.Credit if hasattr(user, 'Credit') else existing.credit
+                existing.status = status
+                existing.name = name
+                updated += 1
+            else:
+                # Add new account with customer_id = 0 (unassigned)
+                new_account = MT5Account(
+                    customer_id=0,
+                    login=login,
+                    name=name,
+                    group=user.Group if hasattr(user, 'Group') else "",
+                    leverage=user.Leverage if hasattr(user, 'Leverage') else 100,
+                    currency="USD",
+                    status=status,
+                    balance=user.Balance if hasattr(user, 'Balance') else 0.0,
+                    credit=user.Credit if hasattr(user, 'Credit') else 0.0,
+                )
+                db.add(new_account)
+                added += 1
+                
+        except Exception as e:
+            logger.error(f"Error syncing account {user.Login if hasattr(user, 'Login') else 'unknown'}: {e}")
+            skipped += 1
+            continue
+    
+    await db.commit()
+    
+    logger.info(f"sync_mt5_accounts_completed", added=added, updated=updated, skipped=skipped)
+    
+    return {
+        "message": "Sync completed successfully",
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+        "total": len(users)
+    }
 
 
 @router.get("/positions/account/{login}", response_model=list[OpenPosition])
@@ -834,11 +945,10 @@ async def get_deal_history(
     
     Default: Last 30 days of history
     """
-    # Verify account exists
+    # Optional: Verify account exists in DB (but don't require it - MT5 is source of truth)
     repo = AccountsRepository(db)
     account = await repo.get_by_login(login)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+    # If account not in DB, still proceed with MT5 query (no error)
     
     try:
         # Get all deal history (defaults to last 30 days)
@@ -893,11 +1003,10 @@ async def get_trade_history(
     
     Default: Last 30 days if no date range specified
     """
-    # Verify account exists
+    # Optional: Verify account exists in DB (but don't require it - MT5 is source of truth)
     repo = AccountsRepository(db)
     account = await repo.get_by_login(login)
-    if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+    # If account not in DB, still proceed with MT5 query (no error)
     
     try:
         # Get position history (closed positions)
