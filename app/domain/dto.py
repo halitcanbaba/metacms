@@ -286,8 +286,10 @@ class MT5DailyPnLResponse(BaseModel):
     date: str  # YYYY-MM-DD format
     present_equity: float  # Current day equity
     equity_prev_day: float  # Previous day equity
-    net_deposit: float  # Net deposits for the day
-    promotion: float  # Promotion amount for the day
+    deposit: float  # Total deposits for the day (DT-tagged deals)
+    withdrawal: float  # Total withdrawals for the day (WT-tagged deals)
+    net_deposit: float  # Net deposits for the day (deposits - withdrawals)
+    promotion: float  # Promotion amount for the day (non-DT/WT/REB tagged deals)
     net_credit_promotion: float  # Net credit/promotions for the day
     total_ib: float  # Total IB commissions for the day
     rebate: float  # Total rebate for the day (from REB comments)

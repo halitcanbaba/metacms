@@ -206,8 +206,8 @@ async def sync_daily_pnl(
                         metrics_dict = {
                             "day": datetime.strptime(pnl.date, "%Y-%m-%d").date(),
                             "login": pnl.login,
-                            "deposit": 0.0,
-                            "withdrawal": 0.0,
+                            "deposit": pnl.deposit,
+                            "withdrawal": pnl.withdrawal,
                             "net_deposit": pnl.net_deposit,
                             "promotion": pnl.promotion,
                             "credit": 0.0,
@@ -238,8 +238,8 @@ async def sync_daily_pnl(
                     institution_dict = {
                         "day": datetime.strptime(institution_pnl.date, "%Y-%m-%d").date(),
                         "login": 0,  # 0 = institution total
-                        "deposit": 0.0,
-                        "withdrawal": 0.0,
+                        "deposit": institution_pnl.deposit,
+                        "withdrawal": institution_pnl.withdrawal,
                         "net_deposit": institution_pnl.net_deposit,
                         "promotion": institution_pnl.promotion,
                         "credit": 0.0,

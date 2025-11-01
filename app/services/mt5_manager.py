@@ -2,7 +2,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Any
 import structlog
 import MT5Manager
@@ -146,15 +146,17 @@ class Mt5DailyPnL:
     date: str  # YYYY-MM-DD format
     present_equity: float  # Current day equity (from daily report)
     equity_prev_day: float  # Previous day equity (from daily report)
-    net_deposit: float  # Net deposits for the day (deposits - withdrawals)
-    promotion: float  # Promotion amount for the day (from daily_bonus)
-    net_credit_promotion: float  # Net credit/promotions for the day
-    total_ib: float  # Total IB commissions for the day (from daily_agent field)
-    rebate: float  # Total rebate for the day (from REB-tagged deals)
-    equity_pnl: float  # Calculated: present_equity - equity_prev_day - net_deposit - net_credit_promotion - total_ib
-    net_pnl: float  # Calculated: equity_pnl - promotion
-    group: str
-    currency: str
+    deposit: float = 0.0  # Total deposits for the day (DT-tagged deals)
+    withdrawal: float = 0.0  # Total withdrawals for the day (WT-tagged deals)
+    net_deposit: float = 0.0  # Net deposits for the day (deposits - withdrawals)
+    promotion: float = 0.0  # Promotion amount for the day (non-DT/WT/REB tagged deals)
+    net_credit_promotion: float = 0.0  # Net credit/promotions for the day
+    total_ib: float = 0.0  # Total IB commissions for the day (from daily_agent field)
+    rebate: float = 0.0  # Total rebate for the day (from REB-tagged deals)
+    equity_pnl: float = 0.0  # Calculated: present_equity - equity_prev_day - net_deposit - net_credit_promotion - total_ib
+    net_pnl: float = 0.0  # Calculated: equity_pnl - promotion
+    group: str = ""
+    currency: str = ""
 
 class CircuitBreaker:
     def __init__(self, failure_threshold: int = 5, timeout: int = 60):
@@ -737,7 +739,10 @@ class MT5ManagerService:
                     
                     # Convert to 1 day earlier (MT5 returns end-of-day timestamp, we want the reporting date)
                     # If MT5 returns 28.10, we show 27.10
-                    report_datetime = datetime.fromtimestamp(date_value) - timedelta(days=1)
+                    # Convert to GMT+3 timezone
+                    utc_dt = datetime.fromtimestamp(date_value, tz=timezone.utc)
+                    gmt3_dt = utc_dt.astimezone(timezone(timedelta(hours=3)))
+                    report_datetime = gmt3_dt - timedelta(days=1)
                     report_date = report_datetime.strftime('%Y-%m-%d')
                     
                     # Get balance and equity fields from MT5 Daily Report
@@ -1004,15 +1009,6 @@ class MT5ManagerService:
                     if action_code not in [2, 3, 4, 6]:
                         continue
                     
-                    # Map action codes to readable names
-                    action_map = {
-                        2: 'DEPOSIT' if deal.Profit > 0 else 'WITHDRAWAL',
-                        3: 'CREDIT' if deal.Profit > 0 else 'CREDIT_OUT',
-                        4: 'CHARGE',
-                        6: 'CORRECTION',
-                    }
-                    action_name = action_map.get(action_code, 'UNKNOWN')
-                    
                     deal_id = deal.Deal if hasattr(deal, 'Deal') else 0
                     deal_login = deal.Login if hasattr(deal, 'Login') else 0
                     amount = deal.Profit if hasattr(deal, 'Profit') else 0.0
@@ -1024,12 +1020,44 @@ class MT5ManagerService:
                     if hasattr(deal, 'Storage'):
                         balance_after = deal.Storage
                     
-                    datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else ""
+                    # Convert timestamp to GMT+3 (Turkey timezone)
+                    if timestamp:
+                        utc_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                        gmt3_dt = utc_dt.astimezone(timezone(timedelta(hours=3)))
+                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        datetime_str = ""
                     
-                    # Check if comment starts with "REB" and tag as Rebate
+                    # Classify based on comment prefix (case-insensitive)
+                    comment_upper = comment.upper() if comment else ""
                     tag = ""
-                    if comment and comment.upper().startswith("REB"):
+                    action_name = ""
+                    
+                    # Check comment prefix for classification
+                    if comment_upper.startswith(('DT', 'DT', 'DT', 'DT')):  # dt, Dt, dT, DT
+                        action_name = 'DEPOSIT'
+                        tag = "Deposit"
+                    elif comment_upper.startswith(('WT', 'WT', 'WT', 'WT')):  # wt, Wt, wT, WT
+                        action_name = 'WITHDRAWAL'
+                        tag = "Withdrawal"
+                    elif comment_upper.startswith("REB"):
+                        # Rebate handling (keep existing logic)
+                        action_name = 'CREDIT' if amount > 0 else 'CREDIT_OUT'
                         tag = "Rebate"
+                    else:
+                        # Everything else is promotion
+                        action_name = 'PROMOTION'
+                        tag = "Promotion"
+                    
+                    # Fallback for action code classification if needed
+                    if not action_name:
+                        action_map = {
+                            2: 'DEPOSIT' if amount > 0 else 'WITHDRAWAL',
+                            3: 'CREDIT' if amount > 0 else 'CREDIT_OUT',
+                            4: 'CHARGE',
+                            6: 'CORRECTION',
+                        }
+                        action_name = action_map.get(action_code, 'UNKNOWN')
                     
                     result.append(Mt5DealHistory(
                         deal_id=deal_id,
@@ -1121,7 +1149,14 @@ class MT5ManagerService:
                     price = deal.Price if hasattr(deal, 'Price') else 0.0
                     
                     action_name = 'BUY' if action_code == 0 else 'SELL'
-                    datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else ""
+                    
+                    # Convert timestamp to GMT+3 (Turkey timezone)
+                    if timestamp:
+                        utc_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                        gmt3_dt = utc_dt.astimezone(timezone(timedelta(hours=3)))
+                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        datetime_str = ""
                     
                     result.append({
                         "deal_id": deal_id,

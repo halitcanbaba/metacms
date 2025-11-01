@@ -39,10 +39,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("database_initialization_failed", error=str(e))
 
+    # Start scheduler for background jobs
+    try:
+        from app.scheduler import start_scheduler
+        start_scheduler()
+        logger.info("scheduler_started")
+    except Exception as e:
+        logger.error("scheduler_start_failed", error=str(e))
+
     yield
 
     # Cleanup
     logger.info("application_shutdown")
+    
+    # Stop scheduler
+    try:
+        from app.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception as e:
+        logger.error("scheduler_stop_failed", error=str(e))
+    
     await close_db()
 
 
@@ -92,6 +108,7 @@ try:
         balance,
         positions,
         audit,
+        reports,
         webhooks_pipedrive,
     )
 
@@ -108,11 +125,12 @@ try:
     app.include_router(balance.router)
     app.include_router(positions.router)
     app.include_router(audit.router)
+    app.include_router(reports.router)
     
     # Webhooks
     app.include_router(webhooks_pipedrive.router)
     
-    logger.info("routers_registered", count=9)
+    logger.info("routers_registered", count=10)
 except ImportError as e:
     logger.warning("router_import_failed", error=str(e))
 # app.include_router(webhooks_pipedrive.router, prefix="/webhooks/pipedrive", tags=["Webhooks"])

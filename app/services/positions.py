@@ -42,16 +42,20 @@ class PositionsService:
                     "buy_volume": pos.buy_volume,
                     "sell_volume": pos.sell_volume,
                     "net_volume": pos.net_volume,
-                    "net_profit": 0.0,  # Would need to calculate from position data
+                    "net_profit": pos.total_profit,
                     "positions_count": pos.positions_count,
                 })
                 total_volume += abs(pos.net_volume)
                 total_positions += pos.positions_count
+                total_profit += pos.total_profit
 
             # Sort by absolute net volume descending
             net_positions.sort(key=lambda x: abs(x["net_volume"]), reverse=True)
 
-            logger.info("net_positions_aggregated", total_positions=total_positions, symbols_count=len(net_positions))
+            logger.info("net_positions_aggregated", 
+                       total_positions=total_positions, 
+                       symbols_count=len(net_positions),
+                       total_profit=total_profit)
 
             return {
                 "total_positions": total_positions,

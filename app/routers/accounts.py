@@ -444,6 +444,8 @@ async def get_daily_pnl(
             date=pnl_result.date,
             present_equity=pnl_result.present_equity,
             equity_prev_day=pnl_result.equity_prev_day,
+            deposit=pnl_result.deposit,
+            withdrawal=pnl_result.withdrawal,
             net_deposit=pnl_result.net_deposit,
             promotion=pnl_result.promotion,
             net_credit_promotion=pnl_result.net_credit_promotion,

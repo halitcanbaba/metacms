@@ -209,3 +209,141 @@ async def credit_operation(
     
     logger.info("credit_operation_completed", operation_id=operation.id, login=login, type=op_type.value, amount=amount)
     return BalanceOperationResponse.model_validate(operation)
+
+
+@router.get("/net-deposit")
+async def get_net_deposit(
+    login: Optional[int] = Query(None, description="Filter by MT5 login"),
+    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+    mt5: MT5ManagerService = Depends(get_mt5_manager),
+):
+    """
+    Get net deposit summary with categorized transactions.
+    
+    - Filters only DEPOSIT and WITHDRAWAL transactions
+    - Categorizes by comment:
+      - Comments starting with 'DT' or 'WT' → tagged as 'deposit'
+      - Other comments → tagged as 'promotion'
+    - Returns summary with totals and categorized transactions
+    """
+    from datetime import datetime, timedelta
+    
+    # Parse dates
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+    else:
+        from_dt = datetime.now() - timedelta(days=30)  # Default: last 30 days
+    
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            to_dt = to_dt.replace(hour=23, minute=59, second=59)  # End of day
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+    else:
+        to_dt = datetime.now()
+    
+    # Get deals from MT5
+    deals = await mt5.get_deal_history(
+        login=login,
+        from_date=from_dt.date(),
+        to_date=to_dt.date()
+    )
+    
+    # Filter only DEPOSIT and WITHDRAWAL deals
+    filtered_deals = [
+        deal for deal in deals 
+        if deal.action in ['DEPOSIT', 'WITHDRAWAL']
+    ]
+    
+    # Categorize and aggregate
+    deposit_total = 0.0
+    withdrawal_total = 0.0
+    deposit_tagged = 0.0
+    promotion_tagged = 0.0
+    withdrawal_tagged = 0.0
+    withdrawal_promotion = 0.0
+    
+    deposit_transactions = []
+    withdrawal_transactions = []
+    
+    for deal in filtered_deals:
+        # Determine tag based on comment
+        comment = deal.comment or ""
+        is_tagged = comment.startswith('DT') or comment.startswith('WT')
+        tag = 'deposit' if is_tagged else 'promotion'
+        
+        transaction = {
+            "deal_id": deal.deal_id,
+            "login": deal.login,
+            "action": deal.action,
+            "amount": deal.amount,
+            "balance_after": deal.balance_after,
+            "comment": deal.comment,
+            "tag": tag,
+            "datetime": deal.datetime_str,
+            "timestamp": deal.timestamp,
+        }
+        
+        if deal.action == 'DEPOSIT':
+            deposit_total += deal.amount
+            if is_tagged:
+                deposit_tagged += deal.amount
+            else:
+                promotion_tagged += deal.amount
+            deposit_transactions.append(transaction)
+        else:  # WITHDRAWAL
+            withdrawal_total += abs(deal.amount)
+            if is_tagged:
+                withdrawal_tagged += abs(deal.amount)
+            else:
+                withdrawal_promotion += abs(deal.amount)
+            withdrawal_transactions.append(transaction)
+    
+    # Calculate net deposit
+    net_deposit = deposit_total - withdrawal_total
+    net_deposit_tagged = deposit_tagged - withdrawal_tagged
+    net_promotion = promotion_tagged - withdrawal_promotion
+    
+    # Sort by timestamp descending (newest first)
+    deposit_transactions.sort(key=lambda x: x["timestamp"], reverse=True)
+    withdrawal_transactions.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    logger.info("net_deposit_calculated",
+               login=login,
+               deposits=len(deposit_transactions),
+               withdrawals=len(withdrawal_transactions),
+               net_deposit=net_deposit)
+    
+    return {
+        "login": login,
+        "from_date": from_dt.strftime("%Y-%m-%d"),
+        "to_date": to_dt.strftime("%Y-%m-%d"),
+        "summary": {
+            "total_deposits": deposit_total,
+            "total_withdrawals": withdrawal_total,
+            "net_deposit": net_deposit,
+            "deposits_tagged": deposit_tagged,
+            "deposits_promotion": promotion_tagged,
+            "withdrawals_tagged": withdrawal_tagged,
+            "withdrawals_promotion": withdrawal_promotion,
+            "net_deposit_tagged": net_deposit_tagged,
+            "net_promotion": net_promotion,
+        },
+        "deposits": {
+            "count": len(deposit_transactions),
+            "total": deposit_total,
+            "transactions": deposit_transactions[:50],  # Limit to 50 most recent
+        },
+        "withdrawals": {
+            "count": len(withdrawal_transactions),
+            "total": withdrawal_total,
+            "transactions": withdrawal_transactions[:50],  # Limit to 50 most recent
+        },
+    }

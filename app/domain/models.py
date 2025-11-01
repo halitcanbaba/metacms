@@ -188,3 +188,44 @@ class PipedriveToken(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<PipedriveToken(id={self.id}, expires_at={self.expires_at}, is_active={self.is_active})>"
+
+
+class DailyPnL(Base, TimestampMixin):
+    """Daily P&L tracking model."""
+
+    __tablename__ = "daily_pnl"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    day: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, index=True)
+    login: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, comment="MT5 login, NULL for system-wide")
+    
+    # Deposit/Withdrawal metrics
+    deposit: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Tagged deposits (DT/WT)")
+    withdrawal: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Tagged withdrawals")
+    net_deposit: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="deposit - withdrawal")
+    promotion: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Non-tagged operations")
+    
+    # Credit metrics
+    credit: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Credit operations")
+    net_credit_promotion: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="credit + promotion")
+    
+    # IB metrics
+    ib_commission: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="IB commission paid")
+    ib_lot_return: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="IB lot return")
+    ib_rebate: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="IB rebate")
+    total_ib: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Total IB costs")
+    
+    # Trading metrics
+    commission: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Trading commissions")
+    swap: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Swap/rollover")
+    closed_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Realized P&L")
+    
+    # Equity metrics
+    equity_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Equity change")
+    a_book_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="A-book P&L")
+    
+    # Net P&L
+    net_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, comment="Total net P&L")
+
+    def __repr__(self) -> str:
+        return f"<DailyPnL(day={self.day}, login={self.login}, net_pnl={self.net_pnl})>"
