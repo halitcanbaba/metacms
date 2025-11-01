@@ -110,6 +110,7 @@ try:
         audit,
         reports,
         webhooks_pipedrive,
+        users,
     )
 
     # Health check (no prefix, used by load balancers)
@@ -126,11 +127,12 @@ try:
     app.include_router(positions.router)
     app.include_router(audit.router)
     app.include_router(reports.router)
+    app.include_router(users.router)
     
     # Webhooks
     app.include_router(webhooks_pipedrive.router)
     
-    logger.info("routers_registered", count=10)
+    logger.info("routers_registered", count=11)
 except ImportError as e:
     logger.warning("router_import_failed", error=str(e))
 # app.include_router(webhooks_pipedrive.router, prefix="/webhooks/pipedrive", tags=["Webhooks"])
