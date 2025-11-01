@@ -2,7 +2,7 @@
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Any
 import structlog
 import MT5Manager
@@ -739,8 +739,10 @@ class MT5ManagerService:
                     
                     # Convert to 1 day earlier (MT5 returns end-of-day timestamp, we want the reporting date)
                     # If MT5 returns 28.10, we show 27.10
-                    # MT5 timestamps are already in GMT+3 (server timezone)
-                    report_datetime = datetime.fromtimestamp(date_value) - timedelta(days=1)
+                    # MT5 timestamps are in UTC, convert to GMT+3
+                    utc_dt = datetime.utcfromtimestamp(date_value)
+                    gmt3_dt = utc_dt + timedelta(hours=3)
+                    report_datetime = gmt3_dt - timedelta(days=1)
                     report_date = report_datetime.strftime('%Y-%m-%d')
                     
                     # Get balance and equity fields from MT5 Daily Report
@@ -1018,10 +1020,11 @@ class MT5ManagerService:
                     if hasattr(deal, 'Storage'):
                         balance_after = deal.Storage
                     
-                    # MT5 timestamps are already in GMT+3 (server timezone)
-                    # Just convert directly without timezone adjustment
+                    # MT5 timestamps are in UTC, convert to GMT+3 for display
                     if timestamp:
-                        datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        utc_dt = datetime.utcfromtimestamp(timestamp)
+                        gmt3_dt = utc_dt + timedelta(hours=3)
+                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
                     else:
                         datetime_str = ""
                     
@@ -1147,10 +1150,11 @@ class MT5ManagerService:
                     
                     action_name = 'BUY' if action_code == 0 else 'SELL'
                     
-                    # MT5 timestamps are already in GMT+3 (server timezone)
-                    # Just convert directly without timezone adjustment
+                    # MT5 timestamps are in UTC, convert to GMT+3 for display
                     if timestamp:
-                        datetime_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        utc_dt = datetime.utcfromtimestamp(timestamp)
+                        gmt3_dt = utc_dt + timedelta(hours=3)
+                        datetime_str = gmt3_dt.strftime('%Y-%m-%d %H:%M:%S')
                     else:
                         datetime_str = ""
                     
