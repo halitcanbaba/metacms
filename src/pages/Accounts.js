@@ -44,14 +44,17 @@ const Accounts = () => {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState([]);
   const [realtimeData, setRealtimeData] = useState([]);
+  const [filteredData, setFilteredData] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [agents, setAgents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [createMode, setCreateMode] = useState('existing'); // 'existing' or 'new'
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   
   // Action modals
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -99,7 +102,12 @@ const Accounts = () => {
       setCustomers(customersData.items || []);
       setAgents(agentsData.items || []);
       setGroups(groupsData || []);
-      setRealtimeData(realtimeResponse.data || []);
+      
+      // Sort by login ascending
+      const sortedData = (realtimeResponse.data || []).sort((a, b) => a.login - b.login);
+      setRealtimeData(sortedData);
+      setFilteredData(sortedData);
+      
       // Set accounts to empty since we're using realtime data directly
       setAccounts([]);
     } catch (err) {
@@ -108,6 +116,42 @@ const Accounts = () => {
       setLoading(false);
     }
   }, []); // Empty deps - this function doesn't depend on any props or state
+
+  // Filter data when search changes
+  useEffect(() => {
+    if (!searchFilter.trim()) {
+      setFilteredData(realtimeData);
+      return;
+    }
+    
+    const filter = searchFilter.toLowerCase();
+    const filtered = realtimeData.filter(account => 
+      account.login.toString().includes(filter) ||
+      (account.name && account.name.toLowerCase().includes(filter)) ||
+      (account.group && account.group.toLowerCase().includes(filter))
+    );
+    setFilteredData(filtered);
+  }, [searchFilter, realtimeData]);
+
+  // Sync with MT5 - Re-import all accounts from MT5 to database
+  const handleSyncWithMT5 = async () => {
+    try {
+      setSyncing(true);
+      setError('');
+      
+      // Call the migration script endpoint (we'll create this)
+      const response = await api.post('/api/accounts/sync-from-mt5');
+      
+      setSuccess(`Successfully synced ${response.data.added + response.data.updated} accounts from MT5`);
+      
+      // Reload data
+      await loadData();
+    } catch (err) {
+      setError('Failed to sync with MT5: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -379,12 +423,21 @@ const Accounts = () => {
 
           <CCard>
             <CCardHeader>
-              <CRow className="align-items-center">
+              <CRow className="align-items-center mb-3">
                 <CCol>
                   <strong>MT5 Accounts</strong>
-                  {!loading && <span className="text-muted ms-2">({realtimeData.length} accounts)</span>}
+                  {!loading && <span className="text-muted ms-2">({filteredData.length} of {realtimeData.length} accounts)</span>}
                 </CCol>
                 <CCol xs="auto">
+                  <CButton 
+                    color="info" 
+                    className="me-2" 
+                    onClick={handleSyncWithMT5}
+                    disabled={syncing}
+                  >
+                    <CIcon icon={cilReload} className="me-2" />
+                    {syncing ? 'Syncing...' : 'Sync with MT5'}
+                  </CButton>
                   <CButton color="secondary" className="me-2" onClick={loadData}>
                     <CIcon icon={cilReload} className="me-2" />
                     Refresh
@@ -395,6 +448,16 @@ const Accounts = () => {
                   </CButton>
                 </CCol>
               </CRow>
+              <CRow>
+                <CCol md={6}>
+                  <CFormInput
+                    type="text"
+                    placeholder="Search by login, name, or group..."
+                    value={searchFilter}
+                    onChange={(e) => setSearchFilter(e.target.value)}
+                  />
+                </CCol>
+              </CRow>
             </CCardHeader>
 
             <CCardBody>
@@ -402,18 +465,29 @@ const Accounts = () => {
                 <div className="text-center py-5">
                   <CSpinner color="primary" />
                 </div>
-              ) : realtimeData.length === 0 ? (
+              ) : filteredData.length === 0 ? (
                 <div className="text-center py-5 text-muted">
-                  <p>No accounts found in MT5 server.</p>
-                  <CButton color="primary" onClick={handleOpenModal}>
-                    Create your first account
-                  </CButton>
+                  {searchFilter ? (
+                    <>
+                      <p>No accounts found matching "{searchFilter}"</p>
+                      <CButton color="secondary" onClick={() => setSearchFilter('')}>
+                        Clear Filter
+                      </CButton>
+                    </>
+                  ) : (
+                    <>
+                      <p>No accounts found in MT5 server.</p>
+                      <CButton color="primary" onClick={handleOpenModal}>
+                        Create your first account
+                      </CButton>
+                    </>
+                  )}
                 </div>
               ) : (
                 <CTable hover responsive>
                   <CTableHead>
                     <CTableRow>
-                      <CTableHeaderCell>Login</CTableHeaderCell>
+                      <CTableHeaderCell>Login ↑</CTableHeaderCell>
                       <CTableHeaderCell>Name</CTableHeaderCell>
                       <CTableHeaderCell>Customer</CTableHeaderCell>
                       <CTableHeaderCell>Agent</CTableHeaderCell>
@@ -428,7 +502,7 @@ const Accounts = () => {
                     </CTableRow>
                   </CTableHead>
                   <CTableBody>
-                    {realtimeData.map((account) => {
+                    {filteredData.map((account) => {
                       return (
                         <CTableRow 
                           key={account.login}
