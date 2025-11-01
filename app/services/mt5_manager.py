@@ -632,22 +632,24 @@ class MT5ManagerService:
             List of daily reports with equity and balance information
         """
         def _get_daily_reports():
-            # Convert dates to Unix timestamps
-            # MT5 server uses GMT+3 timezone, so we need to adjust for that
-            # When user sends 2025-10-31, they mean 2025-10-31 00:00:00 GMT+3
-            # We need to convert to UTC for the timestamp
+            # Convert dates to UTC timestamps
+            # MT5 Manager API expects UTC timestamps
+            # API dates are treated as UTC dates
             
             if from_date:
-                # Start of day in GMT+3 (subtract 3 hours to get UTC)
-                from_timestamp = int(datetime.combine(from_date, datetime.min.time()).timestamp()) + (3 * 3600)
+                # Create datetime in UTC (treat date as UTC, not local)
+                utc_dt = datetime.combine(from_date, datetime.min.time())
+                # Calculate timestamp as if this datetime was UTC
+                from_timestamp = int((utc_dt - datetime(1970, 1, 1)).total_seconds())
             else:
-                # Default to yesterday GMT+3
+                # Default to yesterday
                 yesterday = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                from_timestamp = int((yesterday - timedelta(days=1)).timestamp()) + (3 * 3600)
+                from_timestamp = int((yesterday - timedelta(days=1)).timestamp())
             
             if to_date:
-                # End of day in GMT+3 (23:59:59 GMT+3 = subtract 3 hours to get UTC)
-                to_timestamp = int(datetime.combine(to_date, datetime.max.time()).timestamp()) + (3 * 3600)
+                # End of day in UTC
+                utc_dt = datetime.combine(to_date, datetime.max.time())
+                to_timestamp = int((utc_dt - datetime(1970, 1, 1)).total_seconds())
             else:
                 # Default to now
                 to_timestamp = int(datetime.now().timestamp())
@@ -737,12 +739,10 @@ class MT5ManagerService:
                                      has_datetime_lower=hasattr(report, 'Datetime'))
                         continue
                     
-                    # Convert to 1 day earlier (MT5 returns end-of-day timestamp, we want the reporting date)
-                    # If MT5 returns 28.10, we show 27.10
-                    # MT5 Manager API returns UTC timestamps, parse as UTC
+                    # MT5 Manager API returns UTC timestamps for the reporting date
+                    # Parse directly as UTC without adjustment
                     utc_time = datetime.utcfromtimestamp(date_value)
-                    report_datetime = utc_time - timedelta(days=1)
-                    report_date = report_datetime.strftime('%Y-%m-%d')
+                    report_date = utc_time.strftime('%Y-%m-%d')
                     
                     # Get balance and equity fields from MT5 Daily Report
                     balance = report.Balance if hasattr(report, 'Balance') else 0.0
