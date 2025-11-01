@@ -331,3 +331,67 @@ async def get_latest_daily_pnl(
         "count": len(results),
         "records": results,
     }
+
+
+@router.get("/monthly-top-winners")
+async def get_monthly_top_winners(
+    year: Optional[int] = Query(None, description="Year (defaults to current year)"),
+    month: Optional[int] = Query(None, description="Month (1-12, defaults to current month)"),
+    db: AsyncSession = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """
+    Get monthly top winners ranked by net PNL.
+    
+    Returns all accounts sorted by total net_pnl for the specified month.
+    Includes customer name for each account.
+    
+    **Response:**
+    - rank: Position in ranking (1-based)
+    - login: MT5 account login
+    - customer_name: Name of the customer
+    - total_net_pnl: Sum of net_pnl for the month
+    """
+    from app.domain.models import MT5Account
+    
+    # Default to current year/month
+    now = datetime.now()
+    target_year = year if year else now.year
+    target_month = month if month else now.month
+    
+    # Validate month
+    if not 1 <= target_month <= 12:
+        raise HTTPException(status_code=400, detail="Month must be between 1 and 12")
+    
+    logger.info("get_monthly_top_winners", year=target_year, month=target_month)
+    
+    # Get aggregated data from repository
+    repo = DailyPnLRepository(db)
+    monthly_data = await repo.get_monthly_aggregated(target_year, target_month)
+    
+    # Fetch customer names for each login
+    results = []
+    rank = 1
+    for login, total_net_pnl in monthly_data:
+        # Get account to fetch customer name
+        from sqlalchemy import select
+        stmt = select(MT5Account).where(MT5Account.login == login)
+        result = await db.execute(stmt)
+        account = result.scalar_one_or_none()
+        
+        customer_name = account.customer.name if account and account.customer else "Unknown"
+        
+        results.append({
+            "rank": rank,
+            "login": login,
+            "customer_name": customer_name,
+            "total_net_pnl": round(total_net_pnl, 2),
+        })
+        rank += 1
+    
+    return {
+        "year": target_year,
+        "month": target_month,
+        "count": len(results),
+        "winners": results,
+    }

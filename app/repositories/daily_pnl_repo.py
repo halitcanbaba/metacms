@@ -137,3 +137,42 @@ class DailyPnLRepository:
         stmt = select(DailyPnL).where(and_(*filters)).order_by(DailyPnL.day.desc()).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+    
+    async def get_monthly_aggregated(
+        self,
+        year: int,
+        month: int
+    ) -> list[tuple[int, float]]:
+        """
+        Get aggregated net PNL by login for a specific month.
+        Returns list of (login, total_net_pnl) tuples sorted by net_pnl descending.
+        Excludes login=0 (institution aggregate).
+        """
+        from sqlalchemy import func, extract
+        
+        # Get first and last day of month
+        from calendar import monthrange
+        _, last_day = monthrange(year, month)
+        from_date = datetime(year, month, 1)
+        to_date = datetime(year, month, last_day, 23, 59, 59)
+        
+        # Query to sum net_pnl grouped by login for the month
+        stmt = (
+            select(
+                DailyPnL.login,
+                func.sum(DailyPnL.net_pnl).label('total_net_pnl')
+            )
+            .where(
+                and_(
+                    DailyPnL.day >= from_date,
+                    DailyPnL.day <= to_date,
+                    DailyPnL.login != 0,  # Exclude institution aggregate
+                    DailyPnL.login.isnot(None)  # Exclude null logins
+                )
+            )
+            .group_by(DailyPnL.login)
+            .order_by(func.sum(DailyPnL.net_pnl).desc())
+        )
+        
+        result = await self.db.execute(stmt)
+        return [(row.login, float(row.total_net_pnl)) for row in result]
